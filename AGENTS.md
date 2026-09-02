@@ -25,11 +25,12 @@
 ## UI 规范（重要）
 
 - **所有 UI 组件（输入框 / 下拉框 / 调节框 / 开关 / 标签等）必须自行实现为自定义组件，保持界面风格统一。** 禁止直接使用浏览器原生控件外观：`<input type="number">` 的步进箭头、原生 `<select>`/`<datalist>` 下拉、原生 `<input type="checkbox">` 等一律不得出现。
-- 组件实现位置：`src/dashboard.ts` 内联页面，以小型 JS 工厂函数封装（如 `makeCombobox`、`makeStepper`、`makeSwitch`），纯毒 vanilla JS，无第三方依赖：
-  - 组合框（主题）：点击展开面板 + 顶部过滤输入 + 选项列表 + 键盘（↑/↓/Enter/Esc）+ 点击外部关闭；
+- 组件实现位置：`src/dashboard.ts` 内联页面，以小型 JS 工厂函数封装（如 `makeTextField`、`makeStepper`、`makeSwitch`），纯 vanilla JS，无第三方依赖：
+  - 主题库标签编辑器：chips 列表（前导 ○/● 勾选决定「参与随机抽取」，点击主题名内联改名为 contenteditable，Enter/blur 提交、Esc 还原，✕ 删除且至少保留 1 个），下方 contenteditable 输入框回车添加（新主题默认激活；大小写不敏感去重，重复时短暂提示）；数据模型为 `settings.themes: string[]`（全量库）+ `settings.activeThemes: string[]`（激活子集，schema 校验须为 themes 子集且 min 1；旧版单值 `theme` 迁移为 库=自定义+默认、激活=旧主题），`createSeed` 只从激活子集随机取一个作为本次主题；
   - 步进框（间隔）：`−`/`+` 按钮 + 纯数字文本输入（inputmode=numeric 过滤），带 min/max 钳制；
   - 开关（自动生成）：自绘轨道/滑块（role="switch"，支持空格/回车切换），不依赖 checkbox；
   - 标签胶囊 chips：选中态高亮。
+  - **LLM 配置面板**（顶栏「LLM 配置」→ `#llmOverlay` 宽版 modal，master-detail 两栏）：左栏提供商列表（绿点=有已启用模型、悬停 CSS 显 ✕ 删除、选中项右侧紫罗兰描边）+ 底部「⚖ 模型分配」导航（徽标=自定义分配数），右栏三种视图：提供商编辑表单 / 空态 / 模型分配，底部固定操作栏（状态文字 / 删除 / 保存）。组件：协议类型为分段单选 `.seg-btn`（切换离开 openai_compat 时自动清空 Base URL）、API Key 为打码输入（`-webkit-text-security:disc` + 👁 切换；不支持的浏览器回退为失焦显示 •，真实值始终存于 `keyReal`，不要从 DOM 读）、模型列表为 `.mcard` 复选卡片（点击即取消勾选移除，键盘空格/回车可达）+ 手动回车添加、**自绘下拉 `makeSelect`**（`.cselect` listbox，替代原生 select/datalist，支持 ↓↑/Enter/Esc 键盘、outside-click 关闭、Esc 只关下拉不关面板；用于「模型分配」选择「提供商 · 模型」，选项值编码为 `providerId|model`）、提示用 `.toast`（非 alert）。变更检测用 `JSON.stringify(normProv(...))` 对比选中项与表单；分配视图对比 `savedAssignments`；保存校验 ID 正则 `/^[A-Za-z0-9][A-Za-z0-9_-]*$/`（模板内无反斜杠，见下方转义警示）。
 - 统一设计体系（CSS 变量）：`--bg:#0a0a0a`、`--card:#131313`、`--bd/--bd-2`、`--acc/--acc-deep`（紫罗兰）、焦点环使用 `rgba(139,92,246,.18)` 光晕；纯黑暗色主题 + 紫罗兰点缀。
 - 布局约定：顶部栏（品牌 + 设置 + 立即生成）、状态行、筛选 chips、瀑布流卡片；设置通过 **modal 弹窗**（`#overlay` + `#settings` 样式类）打开，不是展开区也不是侧边栏。
 - 视频提示词里的 `<Picture N>` 参考画面：渲染时用正则（`/&lt;Picture *([0-9]+) *&gt;/gi`，注意不要在 SSR 模板字符串里写 `\s`/`\d` —— 模板字面量的转义处理容易毁掉正则，统一用字面空格 + `[0-9]`）包装成 `.pcref` span；悬停浮层（`.ptip`）只存卡片 id + 序号，描述与配套提示词从 `items` 现查，**不要**把长文本塞进 data 属性。相关字段为 `Inspiration.pictures: { index, description, imagePrompt }[]`，配套生图提示词由生成器对每个引用单独调用 LLM 生产，失败时 `imagePrompt` 留空（卡片正常，浮层显示失败提示）且不影响整条灵感。
@@ -45,12 +46,18 @@
 ## 后端约定
 
 - 状态机：灵感条目 `queued → ready | failed`，错误信息写入 `error` 字段；生成失败不得把系统提示词原文写入结果。
-- LLM 客户端（`src/llm.ts`）：未配置 `LLM_API_KEY` 抛 `LLMNotConfiguredError`；5xx/429 自动重试一次，4xx 快速失败；密钥不进入任何错误消息。
+- LLM 客户端（`src/llm.ts`）：无可用目标（提供商与环境变量均未配置）抛 `LLMNotConfiguredError`；5xx/429 自动重试一次，4xx 快速失败；密钥不进入任何错误消息。
+- **LLM 提供商配置**（`src/llm-config.ts` + `src/llm.ts`）：控制台「LLM 配置」面板 → `GET/PUT/DELETE /api/llm/providers`、`POST /api/llm/fetch-models`、`GET/PUT /api/llm/assignments`，持久化到 `data/llm.json`（`{providers, assignments}`，惰性 `DATA_DIR` 解析，同 scrape-config 模式）。要点：
+  - **密钥脱敏**：`maskProvider()` 对 API 响应打码（保留前 3 后 4 或全 `*`）；前端回传含 `***` 掩码时 `saveLlmProvider()` 保留磁盘原密钥（=未修改），`fetchProviderModels()`/路由对掩码密钥直接拒绝；密钥永远不回传明文、不进日志。
+  - **目标解析** `resolveLlmTarget({task?, key?, baseUrl?, model?})`：显式传参（key/baseUrl/model 任一）走旧约定 env 兜底；否则按「该任务的分配（`getModelAssignment(task)`，须提供商可用且模型在启用列表）→ 第一个可用提供商（未脱敏密钥 + 有模型，openai_compat 还须 baseUrl）→ 环境变量」。四种 kind 统一映射到各自的 OpenAI 兼容 Chat Completions 入口（`CHAT_BASE`，gemini 是 `/v1beta/openai`）。生成阶段路由在 `generator.ts` defaultDeps：idea → `task:'idea'`；图像提示词与视频 `<Picture N>` 参考画面生图提示词 → `task:'image'`；视频提示词 → `task:'video'`。**判定是否可生成一律用 `llmReady()`（动态），不要再 import 已删除的 `config.llmConfigured` 静态常量**。
+  - **分配引用完整性**：`saveLlmProvider`/`deleteLlmProvider`/`setModelAssignments` 内部调用 `pruneAssignments()`——提供商被删或模型被移出启用列表时，指向它的任务分配自动置 null 回退为自动；PUT `/api/llm/assignments` 校验提供商存在且模型在其列表（否则 400）。
+  - 提供商增删改后路由会调 `restartScheduler()` 重新评估调度。
 - 存储：`src/store.ts`，JSON 文件原子写入（tmp + rename）、损坏自动备份恢复、上限 300 条；`DATA_DIR` 默认 `data/`。
 - 失败记录自动清理：`store.pruneFailed(FAILED_RETENTION_HOURS)`（0=失败即清，>0=保留 N 小时），由 `scheduler.ts` 的 `pruneFailedRecords()` 在服务启动、设置变更、每次生成后调用；清理发生在写入失败记录之后，只有实际清除才写盘并打印 `[inspira] 已自动清理失败记录 N 条`。改清理逻辑必须跑 `npm test`（store 单测覆盖两种策略）。
 - 调度：`src/scheduler.ts` 用 `setInterval` 精确间隔 + 单飞保护；**未配置 LLM 时不自动调度**（避免空转失败记录），手动「立即生成」仍可用并给出明确错误。
-- 数据源：`src/sources/` 热点/热图 Provider，失败自动降级为原创点子并记录 `note`；热点默认 GitHub 热门仓库。
-- **聚合抓取工具**（`src/sources/providers.ts` + `aggregator.ts`）：热图来源走内置图像聚合器，按主题生成检索词（`themeToQueries`），**并行**尝试 provider 白名单（总耗时≈最慢源），**失败冷却**（`SCRAPE_FAIL_COOLDOWN_MS`，进程内 Map，成功解除；`clearProviderCooldowns()` 供测试重置——每个测试前必须清，否则失败用例会污染后续用例），去重合并随机取一条；单个 provider 失败不影响其他；全部失败返回 `note` 降级。
+- 数据源：`src/sources/` 热点/热图 Provider，失败自动降级为原创点子并记录 `note`；热点默认 GitHub 热门仓库（`hotTopicsDefaultUrl()` **动态**计算 `created:>近7天` 的 ISO 日期——GitHub Search 不接受 `7days` 这类相对天数，写死会被 422 拒绝）。
+- **聚合抓取工具**（`src/sources/providers.ts` + `aggregator.ts`）：热图来源走内置图像聚合器，按主题生成检索词（`themeToQueries`），**并行**尝试 provider 白名单（总耗时≈最慢源），**失败冷却**（`SCRAPE_FAIL_COOLDOWN_MS`，进程内 `providerState` Map，成功解除；`clearProviderCooldowns()` 供测试重置——每个测试前必须清，否则失败用例会污染后续用例），去重合并随机取一条；单个 provider 失败不影响其他；全部失败返回 `note` 降级。
+  - **健康状态可观测**：`providerState` 同时记录每个 provider 的最近成功/失败时间、`lastError`（describeError 产物）与连续失败次数，`getProviderHealth()` 生成快照、`GET /api/source-health` 暴露；控制台顶部状态行对「启用中且失败/冷却」的源显示 ⚠ 预警，设置 modal 的「采集数据源」区块下方有健康面板。改聚合器失败/成功路径时须同步维护该状态并跑 `npm test`。
   - **provider 白名单与自定义 URL 是前端可配置的**：控制台设置 modal 的「采集数据源」区块 → `PUT /api/source-config` → 持久化到 `data/scrape.json`（`src/sources/scrape-config.ts` 运行时配置，未覆盖字段回退环境变量）。`isEnabled()`/`fetchHotTopics`/`fetchHotImages`/聚合器一律读 `getScrapeConfig()`，**不要再直接读 `config.IMAGE_SCRAPE_PROVIDERS`/`config.HOT_*_URL`**。
   - provider 约定：`isEnabled()` 决定启用（读取运行时配置/密钥）；解析器必须是**纯函数**（如 `parseBingImages`/`parseGoogleImages`/`parseWikimedia`/`parseOpenverse`/`parseXtweets`），与网络解耦、可单测；新增 provider 需同步注册进 `allProviders` 与 `scrapeConfigSchema` 的 providers 枚举。
   - 已知限制：google provider 常被反爬（无浏览器渲染时可能 0 结果），默认关闭；x provider 需 `X_BEARER_TOKEN`（仅环境变量，密钥不进配置存储）且白名单含 `x`；custom 需 `hotImagesUrl`。

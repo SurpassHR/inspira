@@ -16,7 +16,11 @@ function compact<T extends Record<string, unknown>>(obj: T): T {
   return out as T;
 }
 
-export const HOT_TOPICS_DEFAULT_URL = 'https://api.github.com/search/repositories?q=created:%3E7days&sort=stars&order=desc&per_page=15';
+/** GitHub 热门仓库默认源。created:> 限定符只接受 ISO 8601 日期（相对天数如 7days 会被 422 拒绝），因此动态计算 7 天前的日期。 */
+export function hotTopicsDefaultUrl(now: Date = new Date()): string {
+  const since = new Date(now.getTime() - 7 * 86_400_000).toISOString().slice(0, 10);
+  return `https://api.github.com/search/repositories?q=created:%3E${since}&sort=stars&order=desc&per_page=15`;
+}
 
 /**
  * 获取网络热点列表。优先使用 HOT_TOPICS_URL（返回 JSON 数组，元素含 title/summary/url，
@@ -24,7 +28,7 @@ export const HOT_TOPICS_DEFAULT_URL = 'https://api.github.com/search/repositorie
  * 未配置或请求失败时返回空数组，由调用方决定降级策略。
  */
 export async function fetchHotTopics(sourceUrl?: string, fetcher: typeof fetch = fetch): Promise<HotEntry[]> {
-  const url = sourceUrl ?? getScrapeConfig().hotTopicsUrl ?? HOT_TOPICS_DEFAULT_URL;
+  const url = sourceUrl ?? getScrapeConfig().hotTopicsUrl ?? hotTopicsDefaultUrl();
   const short = url.length > 140 ? `${url.slice(0, 140)}…` : url;
   try {
     const res = await fetcher(url, { headers: { 'user-agent': 'inspira/0.1', accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });

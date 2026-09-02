@@ -10,7 +10,7 @@ process.env.IMAGE_SCRAPE_PROVIDERS = 'wikimedia,bing,openverse,x';
 process.env.X_BEARER_TOKEN = 'test-token';
 
 const providers = await import('../sources/providers.js');
-const { aggregateImages, themeToQueries, THEME_QUERIES, enabledProviders, clearProviderCooldowns } = await import('../sources/aggregator.js');
+const { aggregateImages, themeToQueries, THEME_QUERIES, enabledProviders, clearProviderCooldowns, getProviderHealth } = await import('../sources/aggregator.js');
 
 // 故障冷却为进程内状态：每个用例前清空，避免失败用例污染后续用例
 beforeEach(() => { clearProviderCooldowns(); });
@@ -222,4 +222,39 @@ test('aggregateImages：并行抓取——慢源不影响快源结果', async ()
   assert.ok(order.includes('openverse-start'));
   assert.equal(res.items.length, 1);
   assert.equal(res.items[0]!.provider, 'bing');
+});
+test('provider 健康状态：成功记录 lastSuccessAt，失败计入连续次数/lastError 并进入冷却', async () => {
+  // 第一次：openverse 成功 → 记录成功时间，零失败、不在冷却
+  const json = { results: [{ title: 'ok', url: 'https://img.test/1.jpg' }] };
+  const ok = fakeFetcher({ 'openverse.org': () => new Response(JSON.stringify(json)) });
+  await aggregateImages('nature', { fetcher: ok }, 'openverse');
+  let h = getProviderHealth().find((x) => x.id === 'openverse')!;
+  assert.equal(h.consecutiveFailures, 0);
+  assert.ok(h.lastSuccessAt);
+  assert.equal(h.lastFailureAt, null);
+  assert.ok(!h.coolingDown);
+
+  // 第二次：openverse 失败（成功不设冷却，可立即重试）→ 连续 1 次、lastError/lastFailureAt、冷却中
+  const fail = fakeFetcher({});
+  await aggregateImages('nature', { fetcher: fail }, 'openverse');
+  h = getProviderHealth().find((x) => x.id === 'openverse')!;
+  assert.equal(h.consecutiveFailures, 1);
+  assert.ok(h.lastError?.includes('未配置的请求'));
+  assert.ok(h.lastFailureAt);
+  assert.ok(h.lastSuccessAt, '成功记录应与失败记录并存');
+  assert.ok(h.coolingDown && h.cooldownRemainingMs > 0);
+
+  // 未参与抓取的源保持零状态
+  const idle = getProviderHealth().find((x) => x.id === 'wikimedia')!;
+  assert.equal(idle.consecutiveFailures, 0);
+  assert.equal(idle.lastFailureAt, null);
+  assert.ok(!idle.coolingDown);
+});
+
+test('provider 健康状态：enabled 反映白名单与密钥条件（x 无 token 时为 false）', () => {
+  const byId = new Map(getProviderHealth().map((h) => [h.id, h]));
+  assert.equal(byId.get('wikimedia')!.enabled, true);
+  assert.equal(byId.get('openverse')!.enabled, true);
+  // 本文件顶部未设 X_BEARER_TOKEN 之外的密钥要求，x 需要环境变量 token
+  assert.equal(byId.get('x')!.enabled, Boolean(process.env.X_BEARER_TOKEN));
 });

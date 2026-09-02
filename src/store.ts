@@ -9,10 +9,13 @@ function settingsFile(): string { return join(dataDir(), 'settings.json'); }
 function inspirationsFile(): string { return join(dataDir(), 'inspirations.json'); }
 const MAX_INSPIRATIONS = 300;
 
+/** 默认主题库（与旧版预设一致；迁移旧 theme 字段时也会并入） */
+const DEFAULT_THEMES = ['general', 'nature', 'technology', 'fashion', 'surreal', 'city'];
 const defaultSettings: InspirationSettings = {
   intervalMinutes: Number(process.env.DEFAULT_INTERVAL_MINUTES ?? 60),
   enabled: true,
-  theme: 'general',
+  themes: [...DEFAULT_THEMES],
+  activeThemes: [...DEFAULT_THEMES],
   kinds: ['image', 'video'],
   sources: ['hot_topic', 'hot_image', 'original_idea'],
 };
@@ -54,19 +57,36 @@ async function persistInspirations(): Promise<void> {
 export async function initStore(): Promise<void> {
   await mkdir(dataDir(), { recursive: true });
   const [s, items] = await Promise.all([
-    loadJson<InspirationSettings>(settingsFile(), defaultSettings),
+    loadJson<Partial<InspirationSettings> & { theme?: string }>(settingsFile(), defaultSettings),
     loadJson<Inspiration[]>(inspirationsFile(), []),
   ]);
-  settings = { ...defaultSettings, ...s, kinds: s.kinds?.length ? s.kinds : [...defaultSettings.kinds], sources: s.sources?.length ? s.sources : [...defaultSettings.sources] };
+  // 主题库迁移：新模型 themes 数组优先；旧版单值 theme 并入默认库；都缺则用默认库
+  let themes = Array.isArray(s.themes) ? s.themes.map((t) => String(t).trim()).filter(Boolean) : [];
+  if (!themes.length && s.theme && s.theme.trim()) themes = [s.theme.trim(), ...DEFAULT_THEMES];
+  if (!themes.length) themes = [...DEFAULT_THEMES];
+  themes = [...new Set(themes)];
+  // 激活子集迁移：显式 activeThemes 优先（只保留库内成员）；否则旧版单值 theme 只激活它自己，
+  // 其余（新格式但无 activeThemes）默认全激活——沿用之前的随机池行为
+  let activeThemes = Array.isArray(s.activeThemes)
+    ? s.activeThemes.map((t) => String(t).trim()).filter((t) => themes.includes(t))
+    : [];
+  if (!activeThemes.length) activeThemes = s.theme?.trim() ? [s.theme.trim()] : [...themes];
+  if (!activeThemes.length) activeThemes = [...themes];
+  settings = {
+    ...defaultSettings, ...s,
+    themes, activeThemes,
+    kinds: s.kinds?.length ? [...s.kinds] : [...defaultSettings.kinds],
+    sources: s.sources?.length ? [...s.sources] : [...defaultSettings.sources],
+  };
   inspirations = Array.isArray(items) ? items.slice(0, MAX_INSPIRATIONS) : [];
 }
 
 export const store = {
   getSettings(): InspirationSettings {
-    return { ...settings, kinds: [...settings.kinds], sources: [...settings.sources] };
+    return { ...settings, themes: [...settings.themes], activeThemes: [...settings.activeThemes], kinds: [...settings.kinds], sources: [...settings.sources] };
   },
   async setSettings(next: InspirationSettings): Promise<InspirationSettings> {
-    settings = { ...next, kinds: [...next.kinds], sources: [...next.sources] };
+    settings = { ...next, themes: [...next.themes], activeThemes: [...next.activeThemes], kinds: [...next.kinds], sources: [...next.sources] };
     await persistSettings();
     return this.getSettings();
   },

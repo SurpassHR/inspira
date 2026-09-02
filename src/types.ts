@@ -2,10 +2,47 @@ export type InspirationKind = 'image' | 'video';
 export type InspirationSource = 'hot_topic' | 'hot_image' | 'original_idea';
 export type InspirationStatus = 'queued' | 'running' | 'ready' | 'failed';
 
+/** LLM 提供商协议类型（生成链路统一走各家的 OpenAI 兼容 Chat Completions 入口） */
+export type LlmProviderKind = 'openai' | 'anthropic' | 'gemini' | 'openai_compat';
+
+/** LLM 提供商配置（控制台「LLM 配置」面板可增删改，持久化于 data/llm.json） */
+export interface LlmProvider {
+  /** 唯一标识，创建后不可修改 */
+  id: string;
+  /** 展示名称 */
+  name: string;
+  kind: LlmProviderKind;
+  /** API Key；API 返回给前端时脱敏为含 *** / 全 * 的掩码 */
+  apiKey: string;
+  /** 仅 openai_compat 必填（其余协议使用内置兼容入口） */
+  baseUrl?: string;
+  /** 已启用的模型 ID 列表；生成时使用第一个（除非按任务分配了模型） */
+  models: string[];
+}
+
+/** 生成链路的 LLM 任务类型：idea=创意点子；image=图像提示词（Krea 规范，含视频 <Picture N> 参考画面生图提示词）；video=视频提示词（MiniMax H3 规范） */
+export type LlmTask = 'idea' | 'image' | 'video';
+
+/** 把某个生成任务指派到特定提供商的特定模型 */
+export interface ModelAssignment {
+  providerId: string;
+  model: string;
+}
+
+/** 任务级模型分配（控制台「LLM 配置 → 模型分配」可改，持久化于 data/llm.json）；null/缺省 = 自动（第一个可用提供商的第一个模型） */
+export interface LlmModelAssignments {
+  idea?: ModelAssignment | null;
+  image?: ModelAssignment | null;
+  video?: ModelAssignment | null;
+}
+
 export interface InspirationSettings {
   intervalMinutes: number;
   enabled: boolean;
-  theme: string;
+  /** 主题库：全部主题（设置面板可增/删/改） */
+  themes: string[];
+  /** 参与随机抽取的主题子集：每次生成只从其中随机取一个（勾选决定） */
+  activeThemes: string[];
   kinds: InspirationKind[];
   sources: InspirationSource[];
 }

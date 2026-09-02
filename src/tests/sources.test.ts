@@ -75,3 +75,21 @@ test('resolveSourceMaterial：热点来源失败时降级并记录 note', async 
   assert.equal(hotTopic.source, 'hot_topic');
   assert.ok(hotTopic.note?.includes('未能获取'));
 });
+test('hotTopicsDefaultUrl 动态计算 7 天前的 ISO 日期（相对天数 7days 会被 GitHub 422 拒绝）', async () => {
+  const { hotTopicsDefaultUrl } = await import('../sources/hotTopics.js');
+  const url = hotTopicsDefaultUrl(new Date('2026-09-03T12:00:00Z'));
+  assert.ok(url.includes('created:%3E2026-08-27'), url);
+  assert.match(url, /created:%3E\d{4}-\d{2}-\d{2}/);
+  assert.ok(!url.includes('7days'));
+});
+
+test('fetchHotTopics 未配置 URL 时走动态默认源，HTTP 422 降级为空数组', async () => {
+  let requested = '';
+  const capture = (async (input: unknown) => {
+    requested = String(input);
+    return new Response(JSON.stringify({ message: 'Validation Failed' }), { status: 422 });
+  }) as typeof fetch;
+  const entries = await fetchHotTopics(undefined, capture);
+  assert.deepEqual(entries, []);
+  assert.match(requested, /api\.github\.com\/search\/repositories\?q=created:%3E\d{4}-\d{2}-\d{2}/);
+});

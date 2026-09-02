@@ -1,5 +1,6 @@
-import { config, llmConfigured } from './config.js';
+import { config } from './config.js';
 import { createSeed, generateInspiration } from './generator.js';
+import { llmReady } from './llm.js';
 import { store } from './store.js';
 
 let timer: NodeJS.Timeout | undefined;
@@ -26,8 +27,8 @@ export function restartScheduler(): void {
   nextRunAt = null;
   const settings = store.getSettings();
   if (!settings.enabled) return;
-  // 未配置 LLM 时不做自动生成（避免每个周期产生无意义失败记录），手动触发仍可用并会给出明确提示
-  if (!llmConfigured) return;
+  // 未配置 LLM（控制台提供商与环境变量均不可用）时不做自动生成（避免每个周期产生无意义失败记录），手动触发仍可用并会给出明确提示
+  if (!llmReady()) return;
   scheduleNext(settings.intervalMinutes);
 }
 
@@ -48,7 +49,7 @@ export async function runOnce(): Promise<import('./types.js').Inspiration | null
   const seed = createSeed(settings);
   const queued = {
     id: seed.id, createdAt: seed.createdAt, updatedAt: seed.createdAt,
-    kind: seed.kind, source: seed.source, theme: settings.theme,
+    kind: seed.kind, source: seed.source, theme: seed.theme,
     idea: '', prompt: '', status: 'queued' as const,
   };
   await store.add(queued);

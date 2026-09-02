@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { extractPictureRefs, generateInspiration, stripCodeFences, type GeneratorDeps } from '../generator.js';
+import { createSeed, extractPictureRefs, generateInspiration, stripCodeFences, type GeneratorDeps } from '../generator.js';
 import type { InspirationSettings, InspirationSource } from '../types.js';
 
 const settings: InspirationSettings = {
-  intervalMinutes: 60, enabled: true, theme: '自然',
+  intervalMinutes: 60, enabled: true, themes: ['自然', '科技'], activeThemes: ['自然'],
   kinds: ['image', 'video'], sources: ['hot_topic', 'hot_image', 'original_idea'],
 };
-const seed = { id: 's1', kind: 'image' as const, source: 'original_idea' as const, createdAt: '2026-01-01T00:00:00.000Z' };
+const seed = { id: 's1', kind: 'image' as const, source: 'original_idea' as const, theme: '自然', createdAt: '2026-01-01T00:00:00.000Z' };
 const defaultSettings: InspirationSettings = { ...settings, kinds: ['image'], sources: ['original_idea'] };
 
 const pictureDep = async (_desc: string) => 'The frame image prompt paragraph.';
@@ -33,6 +33,19 @@ test('成功路径：idea + prompt 来自 LLM，剥离代码围栏，状态 read
   assert.equal(item.theme, '自然');
   assert.equal(item.id, 's1');
   assert.ok(item.updatedAt);
+});
+
+test('createSeed 只从已激活主题子集随机取（未勾选的不参与）', () => {
+  const s: InspirationSettings = {
+    intervalMinutes: 60, enabled: true, themes: ['山水', '机甲'], activeThemes: ['山水'],
+    kinds: ['image'], sources: ['original_idea'],
+  };
+  for (let n = 0; n < 20; n++) {
+    const sd = createSeed(s);
+    assert.equal(sd.theme, '山水', `theme=${sd.theme} 必须在激活子集内（库内未激活的舰甲不得被抽中）`);
+    assert.equal(sd.kind, 'image');
+    assert.ok(sd.id && sd.createdAt);
+  }
 });
 
 test('素材携带热点 URL 会传给 idea 与 prompt 阶段', async () => {

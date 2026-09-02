@@ -53,12 +53,23 @@ test('PUT /api/source-config：合法保存生效，非法 400，持久化可读
 test('PUT /api/settings 拒绝非法输入', async () => {
   const res = await app.request('/api/settings', { method: 'PUT', headers: json(), body: JSON.stringify({ intervalMinutes: 0 }) });
   assert.equal(res.status, 400);
+  // 主题库不能为空数组，也不能包含空串
+  const empty = await app.request('/api/settings', { method: 'PUT', headers: json(), body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: [], activeThemes: ['general'], kinds: ['image'], sources: ['original_idea'] }) });
+  assert.equal(empty.status, 400);
+  const blank = await app.request('/api/settings', { method: 'PUT', headers: json(), body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['  '], activeThemes: ['general'], kinds: ['image'], sources: ['original_idea'] }) });
+  assert.equal(blank.status, 400);
+  // activeThemes 必须是 themes 的子集
+  const notSubset = await app.request('/api/settings', { method: 'PUT', headers: json(), body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: ['外太空'], kinds: ['image'], sources: ['original_idea'] }) });
+  assert.equal(notSubset.status, 400);
+  // activeThemes 不能为空（至少 1 个参与随机）
+  const noActive = await app.request('/api/settings', { method: 'PUT', headers: json(), body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: [], kinds: ['image'], sources: ['original_idea'] }) });
+  assert.equal(noActive.status, 400);
 });
 
 test('生成流程：未配置 LLM 时状态流转 queued → failed 且错误信息明确', async () => {
   const put = await app.request('/api/settings', {
     method: 'PUT', headers: json(),
-    body: JSON.stringify({ intervalMinutes: 60, enabled: true, theme: 'general', kinds: ['image'], sources: ['original_idea'] }),
+    body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: ['general'], kinds: ['image'], sources: ['original_idea'] }),
   });
   assert.equal(put.status, 200);
 
@@ -82,8 +93,24 @@ test('生成流程：未配置 LLM 时状态流转 queued → failed 且错误�
 test('PRIMARY/禁用状态下手动生成返回 409', async () => {
   await app.request('/api/settings', {
     method: 'PUT', headers: json(),
-    body: JSON.stringify({ intervalMinutes: 60, enabled: false, theme: 'general', kinds: ['image'], sources: ['original_idea'] }),
+    body: JSON.stringify({ intervalMinutes: 60, enabled: false, themes: ['general'], activeThemes: ['general'], kinds: ['image'], sources: ['original_idea'] }),
   });
   const res = await app.request('/api/generate', { method: 'POST' });
   assert.equal(res.status, 409);
+});
+test('GET /api/source-health 返回全部 provider 的健康快照（含启用与零状态）', async () => {
+  const res = await app.request('/api/source-health');
+  assert.equal(res.status, 200);
+  const body = await res.json() as { providers: { id: string; label: string; enabled: boolean; lastSuccessAt: string | null; lastFailureAt: string | null; lastError: string | null; consecutiveFailures: number; coolingDown: boolean; cooldownRemainingMs: number }[] };
+  const ids = body.providers.map((p) => p.id);
+  for (const expected of ['wikimedia', 'bing', 'openverse', 'google', 'custom', 'x']) {
+    assert.ok(ids.includes(expected), `缺少 provider ${expected}`);
+  }
+  for (const p of body.providers) {
+    assert.equal(typeof p.label, 'string');
+    assert.equal(typeof p.enabled, 'boolean');
+    assert.equal(p.lastSuccessAt, null); // 测试进程内未抓取 → 零状态
+    assert.equal(p.consecutiveFailures, 0);
+    assert.ok(!p.coolingDown);
+  }
 });

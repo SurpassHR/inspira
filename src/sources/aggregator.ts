@@ -52,12 +52,65 @@ export interface AggregateResult {
   failed: Record<string, string>;
 }
 
-/** 每个 provider 最近一次失败的冷却截止时间（进程内）。成功会解除冷却。 */
-const failCooldownUntil = new Map<string, number>();
+/** 单个 provider 的进程内状态：失败冷却 + 最近成功/失败记忆（可观测性） */
+interface ProviderState {
+  cooldownUntil: number;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  lastError?: string;
+  consecutiveFailures: number;
+}
 
-/** 清空故障冷却（测试/运维用） */
+const providerState = new Map<string, ProviderState>();
+
+function stateOf(id: string): ProviderState {
+  let s = providerState.get(id);
+  if (!s) { s = { cooldownUntil: 0, consecutiveFailures: 0 }; providerState.set(id, s); }
+  return s;
+}
+
+export interface ProviderHealth {
+  id: string;
+  label: string;
+  /** 该 provider 当前是否启用（白名单 + 各自的启用条件） */
+  enabled: boolean;
+  /** 最近一次成功抓取时间（ISO；null = 进程启动以来从未成功） */
+  lastSuccessAt: string | null;
+  /** 最近一次失败时间（ISO；null = 从未失败） */
+  lastFailureAt: string | null;
+  /** 最近一次失败的原因（describeError 产物；null = 从未失败） */
+  lastError: string | null;
+  /** 连续失败次数，成功一次即归零 */
+  consecutiveFailures: number;
+  /** 是否处于失败冷却期 */
+  coolingDown: boolean;
+  /** 冷却剩余毫秒（不在冷却期为 0） */
+  cooldownRemainingMs: number;
+}
+
+/** 全部 provider 的健康状态快照（供 GET /api/source-health 与控制台展示） */
+export function getProviderHealth(): ProviderHealth[] {
+  const now = Date.now();
+  return allProviders.map((p) => {
+    const s = providerState.get(p.id);
+    const remaining = s ? Math.max(0, s.cooldownUntil - now) : 0;
+    return {
+      id: p.id,
+      label: p.label,
+      enabled: p.isEnabled(),
+      lastSuccessAt: s?.lastSuccessAt ?? null,
+      lastFailureAt: s?.lastFailureAt ?? null,
+      lastError: s?.lastError ?? null,
+      consecutiveFailures: s?.consecutiveFailures ?? 0,
+      coolingDown: remaining > 0,
+      cooldownRemainingMs: remaining,
+    };
+  });
+}
+
+/** 清空故障冷却与健康记忆（测试/运维用） */
 export function clearProviderCooldowns(): void {
-  failCooldownUntil.clear();
+  providerState.clear();
 }
 
 /**
@@ -65,6 +118,7 @@ export function clearProviderCooldowns(): void {
  * - 并行尝试所有启用的 provider（各自有超时），单个失败不影响其他，
  *   总耗时 ≈ 最慢的那个源（而非各源超时之和）
  * - 失败冷却：刚失败的源在 SCRAPE_FAIL_COOLDOWN_MS 内被跳过（避免定时任务反复空等超时）
+ * - 每个 provider 的最近成功/失败、连续失败次数记录进 providerState（GET /api/source-health 可查）
  * - 跨 provider 按 imageUrl 去重，随机打乱后返回
  * - 全部失败时返回 note（调用方据此降级为直接创意）
  */
@@ -73,7 +127,7 @@ export async function aggregateImages(query: string, ctx: ProviderCtx = {}, prov
   const now = Date.now();
   const active: ImageProvider[] = [];
   for (const p of providers) {
-    const until = failCooldownUntil.get(p.id) ?? 0;
+    const until = providerState.get(p.id)?.cooldownUntil ?? 0;
     if (until > now) {
       console.log(`[inspira] 图像源 ${p.label}(${p.id}) 故障冷却中，跳过（剩余 ${Math.ceil((until - now) / 1000)}s）`);
       continue;
@@ -88,17 +142,23 @@ export async function aggregateImages(query: string, ctx: ProviderCtx = {}, prov
 
   await Promise.all(active.map(async (p) => {
     tried.push(p.id);
+    const st = stateOf(p.id);
     try {
       const got = await p.fetchImages(query, ctx);
-      if (config.SCRAPE_FAIL_COOLDOWN_MS > 0) failCooldownUntil.delete(p.id);
+      st.cooldownUntil = 0;
+      st.consecutiveFailures = 0;
+      st.lastSuccessAt = new Date().toISOString();
       for (const it of got) {
         if (seen.has(it.imageUrl)) continue;
         seen.add(it.imageUrl);
         items.push(it);
       }
     } catch (err) {
-      if (config.SCRAPE_FAIL_COOLDOWN_MS > 0) failCooldownUntil.set(p.id, Date.now() + config.SCRAPE_FAIL_COOLDOWN_MS);
-      failed[p.id] = describeError(err);
+      st.lastFailureAt = new Date().toISOString();
+      st.lastError = describeError(err);
+      st.consecutiveFailures += 1;
+      if (config.SCRAPE_FAIL_COOLDOWN_MS > 0) st.cooldownUntil = Date.now() + config.SCRAPE_FAIL_COOLDOWN_MS;
+      failed[p.id] = st.lastError;
       console.error(`[inspira] 图像源 ${p.label}(${p.id}) 抓取失败：${failed[p.id]}`);
     }
   }));
