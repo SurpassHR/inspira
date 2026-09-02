@@ -1,0 +1,89 @@
+import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+
+// 在导入 server（及其 store）之前指定独立的临时数据目录，保证测试隔离
+const dir = await mkdtemp(join(tmpdir(), 'inspira-api-'));
+process.env.DATA_DIR = dir;
+process.env.LLM_API_KEY = '';
+// 让失败记录可被断言（默认 0 会失败即清，改 24h 保留以验证错误信息与不泄漏规范）
+process.env.FAILED_RETENTION_HOURS = '24';
+
+const { app } = await import('../app.js');
+
+function json(headers: Record<string, string> = {}) {
+  return { 'content-type': 'application/json', ...headers };
+}
+
+test('GET / 返回控制台页面', async () => {
+  const res = await app.request('/');
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /Inspira/);
+});
+
+test('GET /api/health 反映未配置 LLM、调度信息与当前采集源', async () => {
+  const res = await app.request('/api/health');
+  const h = await res.json() as { llmConfigured: boolean; scheduler: { enabled: boolean; intervalMinutes: number }; scrape: { providers: string[]; xConfigured: boolean } };
+  assert.equal(h.llmConfigured, false);
+  assert.equal(h.scheduler.enabled, true);
+  assert.ok(h.scheduler.intervalMinutes > 0);
+  assert.ok(Array.isArray(h.scrape.providers) && h.scrape.providers.length > 0);
+  assert.equal(typeof h.scrape.xConfigured, 'boolean');
+});
+
+test('PUT /api/source-config：合法保存生效，非法 400，持久化可读回', async () => {
+  const bad = await app.request('/api/source-config', { method: 'PUT', headers: json(), body: JSON.stringify({ providers: [] }) });
+  assert.equal(bad.status, 400);
+
+  const put = await app.request('/api/source-config', {
+    method: 'PUT', headers: json(),
+    body: JSON.stringify({ providers: ['wikimedia', 'openverse'], hotImagesUrl: 'https://example.com/img.json', timeoutMs: 5000 }),
+  });
+  assert.equal(put.status, 200);
+  const saved = await put.json() as { providers: string[]; hotImagesUrl: string };
+  assert.deepEqual(saved.providers, ['wikimedia', 'openverse']);
+
+  const got = await (await app.request('/api/source-config')).json() as { providers: string[]; hotImagesUrl: string };
+  assert.deepEqual(got.providers, ['wikimedia', 'openverse']);
+  assert.equal(got.hotImagesUrl, 'https://example.com/img.json');
+});
+
+test('PUT /api/settings 拒绝非法输入', async () => {
+  const res = await app.request('/api/settings', { method: 'PUT', headers: json(), body: JSON.stringify({ intervalMinutes: 0 }) });
+  assert.equal(res.status, 400);
+});
+
+test('生成流程：未配置 LLM 时状态流转 queued → failed 且错误信息明确', async () => {
+  const put = await app.request('/api/settings', {
+    method: 'PUT', headers: json(),
+    body: JSON.stringify({ intervalMinutes: 60, enabled: true, theme: 'general', kinds: ['image'], sources: ['original_idea'] }),
+  });
+  assert.equal(put.status, 200);
+
+  const gen = await app.request('/api/generate', { method: 'POST' });
+  assert.equal(gen.status, 202);
+  const { id } = await gen.json() as { id: string };
+
+  const item = await (await app.request(`/api/inspirations/${id}`)).json() as { status: string; error?: string };
+  assert.equal(item.status, 'failed');
+  assert.match(item.error ?? '', /未配置|LLM/);
+
+  // 生成的结果绝不包含系统提示词原文（Krea / MiniMax 规范的内容）
+  const all = await (await app.request('/api/inspirations?limit=50')).json() as { prompt: string; idea: string }[];
+  assert.ok(all.length >= 1);
+  for (const it of all) {
+    assert.ok(!it.prompt.includes('PRIMARY LANGUAGE RULE'));
+    assert.ok(!it.prompt.includes('text-to-image models'));
+  }
+});
+
+test('PRIMARY/禁用状态下手动生成返回 409', async () => {
+  await app.request('/api/settings', {
+    method: 'PUT', headers: json(),
+    body: JSON.stringify({ intervalMinutes: 60, enabled: false, theme: 'general', kinds: ['image'], sources: ['original_idea'] }),
+  });
+  const res = await app.request('/api/generate', { method: 'POST' });
+  assert.equal(res.status, 409);
+});
