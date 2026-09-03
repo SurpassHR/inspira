@@ -5,4 +5,5 @@ data/
 *.log
 .codegraph/
 .playwright-cli/
+.zcode/
 output/
