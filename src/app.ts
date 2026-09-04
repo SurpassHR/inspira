@@ -266,12 +266,15 @@ app.get('/api/admin/audit', async (c) => {
 
 app.get('/api/inspirations', (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 50) || 50, 1), 100);
+  // offset：画廊懒加载分页；X-Total-Count：过滤后的全集条数（前端判断是否还有下一页）
+  const offset = Math.min(Math.max(Number(c.req.query('offset') ?? 0) || 0, 0), 10_000);
   const kind = c.req.query('kind');
   const source = c.req.query('source');
   let items = store.list();
   if (kind) items = items.filter((i) => i.kind === kind);
   if (source) items = items.filter((i) => i.source === source);
-  return c.json(items.slice(0, limit));
+  c.header('X-Total-Count', String(items.length));
+  return c.json(items.slice(offset, offset + limit));
 });
 
 // 全库统计（后台总览用；需登录）

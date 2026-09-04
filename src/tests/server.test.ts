@@ -103,8 +103,17 @@ test('生成流程：未配置 LLM 时状态流转 queued → failed 且错误�
   assert.match(item.error ?? '', /未配置|LLM/);
 
   // 生成的结果绝不包含系统提示词原文（Krea / MiniMax 规范的内容）
-  const all = await (await app.request('/api/inspirations?limit=50')).json() as { prompt: string; idea: string }[];
+  const all = await (await app.request('/api/inspirations?limit=50')).json() as { id: string; prompt: string; idea: string }[];
   assert.ok(all.length >= 1);
+
+  // 画廊懒加载分页：offset/limit 切片 + X-Total-Count 报告过滤后全集条数
+  const pageRes = await app.request('/api/inspirations?offset=0&limit=2');
+  assert.equal(pageRes.headers.get('X-Total-Count'), String(all.length));
+  const page = await pageRes.json() as { id: string }[];
+  assert.equal(page.length, Math.min(2, all.length));
+  assert.equal(page[0]!.id, all[0]!.id);
+  const tail = await (await app.request(`/api/inspirations?offset=${all.length + 10}&limit=5`)).json() as unknown[];
+  assert.equal(tail.length, 0);
   for (const it of all) {
     assert.ok(!it.prompt.includes('PRIMARY LANGUAGE RULE'));
     assert.ok(!it.prompt.includes('text-to-image models'));
