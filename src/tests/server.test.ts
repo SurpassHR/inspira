@@ -9,6 +9,9 @@ import { adminCookieOf, json, type TestApp } from './helpers.js';
 const dir = await mkdtemp(join(tmpdir(), 'inspira-api-'));
 process.env.DATA_DIR = dir;
 process.env.LLM_API_KEY = '';
+// 屏蔽本地 .env 的种子管理员（ADMIN_USERNAME/ADMIN_PASSWORD），否则 helper 登录 admin12345 会失败
+process.env.ADMIN_USERNAME = '';
+process.env.ADMIN_PASSWORD = '';
 // 让失败记录可被断言（默认 0 会失败即清，改 24h 保留以验证错误信息与不泄漏规范）
 process.env.FAILED_RETENTION_HOURS = '24';
 

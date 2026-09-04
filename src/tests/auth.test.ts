@@ -8,6 +8,9 @@ import { cookieOf, cookieOfLogin, json, type TestApp } from './helpers.js';
 const dir = await mkdtemp(join(tmpdir(), 'inspira-auth-'));
 process.env.DATA_DIR = dir;
 process.env.LLM_API_KEY = '';
+// 屏蔽本地 .env 的种子管理员（ADMIN_USERNAME/ADMIN_PASSWORD），否则 helper 登录 admin12345 会失败
+process.env.ADMIN_USERNAME = '';
+process.env.ADMIN_PASSWORD = '';
 
 const { app } = await import('../app.js');
 const A = app as unknown as TestApp;
