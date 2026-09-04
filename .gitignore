@@ -6,4 +6,5 @@ data/
 .codegraph/
 .playwright-cli/
 .zcode/
+.freebuff/
 output/

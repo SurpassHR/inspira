@@ -12,7 +12,9 @@ function dataDir(): string { return process.env.DATA_DIR ?? 'data'; }
 function file(): string { return join(dataDir(), 'llm.json'); }
 
 const KINDS: readonly LlmProviderKind[] = ['openai', 'anthropic', 'gemini', 'openai_compat'];
-const TASKS: readonly LlmTask[] = ['idea', 'image', 'video'];
+/** 全部 LLM 任务（idea/image/video/imagegen）；路由校验与分配清理共用此清单 */
+export const LLM_TASKS: readonly LlmTask[] = ['idea', 'image', 'video', 'imagegen'];
+const TASKS = LLM_TASKS;
 
 let providers: LlmProvider[] = [];
 let assignments: LlmModelAssignments = {};
@@ -173,6 +175,7 @@ export function getModelAssignments(): LlmModelAssignments {
     idea: assignments.idea ? { ...assignments.idea } : null,
     image: assignments.image ? { ...assignments.image } : null,
     video: assignments.video ? { ...assignments.video } : null,
+    imagegen: assignments.imagegen ? { ...assignments.imagegen } : null,
   };
 }
 

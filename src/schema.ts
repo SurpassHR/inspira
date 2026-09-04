@@ -54,6 +54,56 @@ export const modelAssignmentsSchema = z.object({
   idea: modelAssignmentSchema.nullable().optional(),
   image: modelAssignmentSchema.nullable().optional(),
   video: modelAssignmentSchema.nullable().optional(),
+  imagegen: modelAssignmentSchema.nullable().optional(),
 }).strict();
 
 export type ModelAssignmentsInput = z.infer<typeof modelAssignmentsSchema>;
+
+// ===== 后台管理（登录 / 账号） =====
+
+/** 用户名：2–32 位字母/数字/点/下划线/连字符（前端建号时同规则校验） */
+export const usernameSchema = z.string().trim().min(2).max(32)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{1,31}$/, '用户名仅限 2–32 位字母/数字/点/下划线/连字符，且以字母或数字开头');
+
+export const passwordSchema = z.string().min(8).max(128);
+
+export const loginSchema = z.object({
+  username: z.string().trim().min(1).max(64),
+  password: z.string().min(1).max(128),
+}).strict();
+
+export type LoginInput = z.infer<typeof loginSchema>;
+
+/** 首次引导创建管理员（仅 data/auth.json 无用户时可用） */
+export const authSetupSchema = z.object({
+  username: usernameSchema,
+  password: passwordSchema,
+}).strict();
+
+/** 修改自己的密码 */
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  nextPassword: passwordSchema,
+}).strict();
+
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
+/** 后台新建账号（角色缺省为 viewer） */
+export const adminUserCreateSchema = z.object({
+  username: usernameSchema,
+  password: passwordSchema,
+  role: z.enum(['admin', 'viewer']).default('viewer'),
+}).strict();
+
+export type AdminUserCreateInput = z.infer<typeof adminUserCreateSchema>;
+
+/** 后台修改账号：至少提供一项；改用户名/角色/重置密码均可选 */
+export const adminUserUpdateSchema = z.object({
+  username: usernameSchema.optional(),
+  role: z.enum(['admin', 'viewer']).optional(),
+  password: passwordSchema.optional(),
+}).strict().refine((u) => u.username !== undefined || u.role !== undefined || u.password !== undefined, {
+  message: '至少提供一项要修改的内容',
+});
+
+export type AdminUserUpdateInput = z.infer<typeof adminUserUpdateSchema>;

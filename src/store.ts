@@ -108,6 +108,14 @@ export const store = {
     inspirations = [];
     await persistInspirations();
   },
+  /** 删除单条灵感（后台灵感管理）；返回是否存在该记录 */
+  async delete(id: string): Promise<boolean> {
+    const next = inspirations.filter((i) => i.id !== id);
+    if (next.length === inspirations.length) return false;
+    inspirations = next;
+    await persistInspirations();
+    return true;
+  },
   /**
    * 清理失败记录：retentionHours=0 立即清除全部 failed；>0 仅清除 updatedAt 早于
    * now-retention 的 failed。返回清除条数（无变化时不写盘）。

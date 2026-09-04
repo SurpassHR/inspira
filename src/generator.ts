@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { describeError } from './errors.js';
-import { chatCompletion, type ChatMessage } from './llm.js';
+import { generateAndSaveImage } from './images.js';
+import { chatCompletion, ImageGenNotConfiguredError, type ChatMessage } from './llm.js';
 import { buildIdeaPrompt, buildPicturePrompt, buildPromptPrompt } from './prompts.js';
 import { resolveSourceMaterial } from './sources/index.js';
-import type { Inspiration, InspirationKind, InspirationSettings, InspirationSource, PictureRef, SourceMaterial } from './types.js';
+import type { Inspiration, InspirationCover, InspirationKind, InspirationSettings, InspirationSource, PictureRef, SourceMaterial } from './types.js';
 
 export interface GeneratorDeps {
   idea(material: SourceMaterial, theme: string): Promise<string>;
   prompt(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial): Promise<string>;
   /** 为视频提示词中的 <Picture N> 参考画面生成配套英文生图提示词 */
   picture(description: string, theme: string, idea: string): Promise<string>;
+  /** 「生图」：为图像类灵感的最终提示词产出封面图（未提供或未分配生图模型时跳过） */
+  imagegen?(prompt: string, id: string): Promise<{ file: string; model: string }>;
   material(source: InspirationSource, theme: string): Promise<SourceMaterial>;
 }
 
@@ -19,6 +22,7 @@ export const defaultDeps: GeneratorDeps = {
   prompt: (kind, theme, idea, material) =>
     chatCompletion(buildPromptPrompt(kind, theme, idea, material), { task: kind === 'video' ? 'video' : 'image' }),
   picture: (description, theme, idea) => chatCompletion(buildPicturePrompt(description, theme, idea), { task: 'image' }),
+  imagegen: (prompt, id) => generateAndSaveImage(prompt, id),
   material: (source, theme) => resolveSourceMaterial(source, theme),
 };
 
@@ -71,8 +75,10 @@ export function extractPictureRefs(text: string): { index: number; description: 
 
 /**
  * 生成一条灵感：
- * 1. 收集素材（热点/热图/无）→ 2. LLM 产出创意点子 → 3. LLM 按 krea2/mmh3 规范产出最终英文提示词。
- * 任一步失败都会返回 status='failed' 的条目并附带错误信息（不抛出）。
+ * 1. 收集素材（热点/热图/无）→ 2. LLM 产出创意点子 → 3. LLM 按 krea2/mmh3 规范产出最终英文提示词
+ * → 4. 图像类灵感若已分配「生图」模型，自动生成封面图。
+ * 任一步失败都会返回 status='failed' 的条目并附带错误信息（不抛出）；
+ * 封面生图失败只记 coverError，不影响提示词本身（status 仍为 ready）。
  */
 export async function generateInspiration(settings: InspirationSettings, seed: InspirationSeed, deps = defaultDeps): Promise<Inspiration> {
   const base = {
@@ -103,7 +109,21 @@ export async function generateInspiration(settings: InspirationSettings, seed: I
         }));
       }
     }
-    return { ...base, idea, prompt, pictures, material, status: 'ready', updatedAt: new Date().toISOString() };
+    // 图像类灵感自动生图做卡片封面；未分配生图模型（ImageGenNotConfiguredError）= 功能未启用，静默跳过
+    let cover: InspirationCover | undefined;
+    let coverError: string | undefined;
+    if (seed.kind === 'image' && deps.imagegen) {
+      try {
+        const r = await deps.imagegen(prompt, seed.id);
+        cover = { file: r.file, model: r.model };
+      } catch (err) {
+        if (!(err instanceof ImageGenNotConfiguredError)) {
+          coverError = describeError(err);
+          console.error('[inspira] 封面生图失败', { id: seed.id, error: coverError });
+        }
+      }
+    }
+    return { ...base, idea, prompt, cover, coverError, pictures, material, status: 'ready', updatedAt: new Date().toISOString() };
   } catch (err) {
     const message = describeError(err);
     console.error('[inspira] 生成失败', { id: seed.id, kind: seed.kind, source: seed.source, error: message });

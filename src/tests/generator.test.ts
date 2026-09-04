@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSeed, extractPictureRefs, generateInspiration, stripCodeFences, type GeneratorDeps } from '../generator.js';
+import { ImageGenNotConfiguredError } from '../llm.js';
 import type { InspirationSettings, InspirationSource } from '../types.js';
 
 const settings: InspirationSettings = {
@@ -135,4 +136,53 @@ test('图像提示词不触发参考画面流程', async () => {
   assert.equal(item.status, 'ready');
   assert.equal(pictureCalled, 0);
   assert.equal(item.pictures, undefined);
+});
+
+test('图像灵感：imagegen 依赖就绪时自动生成封面（cover），提示词作为生图入参', async () => {
+  let seen: { prompt: string; id: string } | null = null;
+  const deps = imageDeps({
+    imagegen: async (prompt, id) => {
+      seen = { prompt, id };
+      return { file: `${id}.png`, model: 'img-model' };
+    },
+  });
+  const item = await generateInspiration(defaultSettings, seed, deps);
+  assert.equal(item.status, 'ready');
+  assert.deepEqual(seen, { prompt: 'The final English image prompt paragraph.', id: 's1' });
+  assert.deepEqual(item.cover, { file: 's1.png', model: 'img-model' });
+  assert.equal(item.coverError, undefined);
+});
+
+test('图像灵感：封面生图失败只记 coverError，status 仍 ready、提示词可用', async () => {
+  const deps = imageDeps({
+    imagegen: async () => { throw new Error('生图请求失败：HTTP 500'); },
+  });
+  const item = await generateInspiration(defaultSettings, seed, deps);
+  assert.equal(item.status, 'ready');
+  assert.equal(item.prompt, 'The final English image prompt paragraph.');
+  assert.equal(item.cover, undefined);
+  assert.match(item.coverError ?? '', /HTTP 500/);
+});
+
+test('图像灵感：未分配生图模型（ImageGenNotConfiguredError）静默跳过封面，不算失败', async () => {
+  const deps = imageDeps({
+    imagegen: async () => { throw new ImageGenNotConfiguredError(); },
+  });
+  const item = await generateInspiration(defaultSettings, seed, deps);
+  assert.equal(item.status, 'ready');
+  assert.equal(item.cover, undefined);
+  assert.equal(item.coverError, undefined);
+});
+
+test('视频灵感不调用生图；未提供 imagegen 依赖的图像灵感也不生图', async () => {
+  let called = 0;
+  const deps = imageDeps({
+    imagegen: async () => { called++; return { file: 'x.png', model: 'm' }; },
+  });
+  const v = await generateInspiration({ ...settings, kinds: ['video'] }, { ...seed, kind: 'video' }, deps);
+  assert.equal(v.cover, undefined);
+  assert.equal(called, 0);
+  const i = await generateInspiration(defaultSettings, seed, imageDeps());
+  assert.equal(i.cover, undefined);
+  assert.equal(called, 0);
 });

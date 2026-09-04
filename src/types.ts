@@ -2,7 +2,7 @@ export type InspirationKind = 'image' | 'video';
 export type InspirationSource = 'hot_topic' | 'hot_image' | 'original_idea';
 export type InspirationStatus = 'queued' | 'running' | 'ready' | 'failed';
 
-/** LLM 提供商协议类型（生成链路统一走各家的 OpenAI 兼容 Chat Completions 入口） */
+/** LLM 提供商协议类型（生成链路统一走各家的 OpenAI 兼容 Chat Completions 入口；生图走 OpenAI 兼容 images 入口） */
 export type LlmProviderKind = 'openai' | 'anthropic' | 'gemini' | 'openai_compat';
 
 /** LLM 提供商配置（控制台「LLM 配置」面板可增删改，持久化于 data/llm.json） */
@@ -20,8 +20,8 @@ export interface LlmProvider {
   models: string[];
 }
 
-/** 生成链路的 LLM 任务类型：idea=创意点子；image=图像提示词（Krea 规范，含视频 <Picture N> 参考画面生图提示词）；video=视频提示词（MiniMax H3 规范） */
-export type LlmTask = 'idea' | 'image' | 'video';
+/** 生成链路的 LLM 任务类型：idea=创意点子；image=图像提示词（Krea 规范，含视频 <Picture N> 参考画面生图提示词）；video=视频提示词（MiniMax H3 规范）；imagegen=生图（图像类灵感提示词就绪后自动产出封面图，走 OpenAI 兼容 images 接口，仅按分配解析、不回退默认提供商/环境变量） */
+export type LlmTask = 'idea' | 'image' | 'video' | 'imagegen';
 
 /** 把某个生成任务指派到特定提供商的特定模型 */
 export interface ModelAssignment {
@@ -29,11 +29,12 @@ export interface ModelAssignment {
   model: string;
 }
 
-/** 任务级模型分配（控制台「LLM 配置 → 模型分配」可改，持久化于 data/llm.json）；null/缺省 = 自动（第一个可用提供商的第一个模型） */
+/** 任务级模型分配（控制台「LLM 配置 → 模型分配」可改，持久化于 data/llm.json）；null/缺省 = 自动（第一个可用提供商的第一个模型；imagegen 无自动回退，未分配=不生图） */
 export interface LlmModelAssignments {
   idea?: ModelAssignment | null;
   image?: ModelAssignment | null;
   video?: ModelAssignment | null;
+  imagegen?: ModelAssignment | null;
 }
 
 export interface InspirationSettings {
@@ -79,6 +80,62 @@ export interface PictureRef {
   imagePrompt: string;
 }
 
+/** 后台角色：admin=全部权限；viewer=只读管理视图（可浏览后台，不能执行写操作） */
+export type Role = 'admin' | 'viewer';
+
+/** 账号记录（磁盘形态，含口令散列；data/auth.json） */
+export interface AuthUser {
+  id: string;
+  username: string;
+  role: Role;
+  /** scrypt 散列参数（N,r,p 固定，见 src/auth.ts） */
+  salt: string;
+  hash: string;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt?: string | null;
+}
+
+/** 返回给前端的账号形态（永不包含 salt/hash） */
+export interface PublicUser {
+  id: string;
+  username: string;
+  role: Role;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
+}
+
+/** 在线会话（仅存内存；服务重启后需重新登录） */
+export interface ActiveSession {
+  token: string;
+  userId: string;
+  username: string;
+  ip: string | null;
+  createdAt: string;
+  expiresAt: string;
+  /** 是否当前请求自己的会话（仅列表接口内的标记） */
+  current?: boolean;
+}
+
+/** 审计事件（data/audit.jsonl 追加行；仅安全相关事件，不含灵感内容） */
+export interface AuditEntry {
+  ts: string;
+  actor: string | null;
+  role?: string | null;
+  action: string;
+  detail?: string;
+  ip?: string | null;
+}
+
+/** 图像类灵感的封面图（提示词就绪后由「生图」任务自动产出，文件存于 DATA_DIR/images/） */
+export interface InspirationCover {
+  /** 文件名（{灵感 id}.{扩展名}），经 /api/images/:name 访问 */
+  file: string;
+  /** 实际使用的生图模型（提供商 · 模型 的模型部分） */
+  model: string;
+}
+
 export interface Inspiration {
   id: string;
   createdAt: string;
@@ -93,4 +150,8 @@ export interface Inspiration {
   material?: SourceMaterial;
   /** 视频提示词中 <Picture N> 参考画面及配套生图提示词（仅视频且存在引用时有） */
   pictures?: PictureRef[];
+  /** 封面图（仅图像类灵感，且「生图」任务已分配模型时生成） */
+  cover?: InspirationCover;
+  /** 封面生图失败的原因（灵感本身 status 仍为 ready，提示词可用） */
+  coverError?: string;
 }

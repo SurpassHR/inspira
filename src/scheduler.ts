@@ -1,5 +1,6 @@
 import { config } from './config.js';
 import { createSeed, generateInspiration } from './generator.js';
+import { pruneOrphanImages } from './images.js';
 import { llmReady } from './llm.js';
 import { store } from './store.js';
 
@@ -10,11 +11,14 @@ let running = false;
 /**
  * 自动清理失败（error）记录：按 FAILED_RETENTION_HOURS 策略（默认 0=失败即清）。
  * 在服务启动、设置变更以及每次生成完成后调用；只有实际清除了记录才写盘并打日志。
+ * 同时回收孤儿封面图（对应灵感已被清空/淘汰的 data/images 文件）。
  */
 export async function pruneFailedRecords(): Promise<number> {
   try {
     const n = await store.pruneFailed(config.FAILED_RETENTION_HOURS);
     if (n > 0) console.log(`[inspira] 已自动清理失败记录 ${n} 条（FAILED_RETENTION_HOURS=${config.FAILED_RETENTION_HOURS}h）`);
+    const imgs = await pruneOrphanImages(store.list().map((i) => i.id));
+    if (imgs > 0) console.log(`[inspira] 已自动清理孤儿封面图 ${imgs} 张`);
     return n;
   } catch {
     return 0;
