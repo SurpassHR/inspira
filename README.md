@@ -9,10 +9,10 @@
 ## 快速开始
 
 ```bash
-npm install
+pnpm install
 cp .env.example .env   # 填入 LLM_API_KEY 等
 npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SSE 热重载自动刷新（角标「DEV · 热重载」）
-# 或 npm start
+# 或 npm start（亦可用 pnpm start）
 ```
 
 打开 <http://localhost:8787> 浏览**瀑布式提示词画廊**（公开只读；UI/UX 借鉴 prompts.chat —— 纯黑背景 + 深灰卡片 + 紫罗兰点缀 + mono 提示词块）。每张卡片顶部预留**媒体占位封面**（图像 4:3 / 视频 16:9 带播放徽标与「6 秒」角标），卡片含点子标题、来源链接、可展开的提示词、主题标签与底栏操作（展开/复制），顶部支持按图像/视频筛选。
