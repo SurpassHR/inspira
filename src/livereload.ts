@@ -52,5 +52,6 @@ export function liveReloadScript(): string {
 }
 
 export function devBadgeHtml(): string {
-  return '<div style="position:fixed;left:12px;bottom:12px;z-index:999;font:11px/1.6 ui-monospace,monospace;color:#a78bfa;background:#131313;border:1px solid #333;border-radius:999px;padding:3px 10px;opacity:.85">DEV · 热重载</div>';
+  // 右下角：左下角与后台侧边栏底部「返回公开画廊」链接重叠
+  return '<div style="position:fixed;right:12px;bottom:12px;z-index:999;font:11px/1.6 ui-monospace,monospace;color:#a78bfa;background:#131313;border:1px solid #333;border-radius:999px;padding:3px 10px;opacity:.85">DEV · 热重载</div>';
 }
