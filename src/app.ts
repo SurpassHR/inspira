@@ -265,8 +265,8 @@ app.get('/api/admin/audit', async (c) => {
 // ===== 公共只读（画廊） =====
 
 app.get('/api/inspirations', (c) => {
-  const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 50) || 50, 1), 100);
-  // offset：画廊懒加载分页；X-Total-Count：过滤后的全集条数（前端判断是否还有下一页）
+  // limit 上限覆盖 store 的 300 条容量：画廊做视窗虚拟化，需要一次全量拉取（offset/limit 保留兼容）
+  const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 50) || 50, 1), 500);
   const offset = Math.min(Math.max(Number(c.req.query('offset') ?? 0) || 0, 0), 10_000);
   const kind = c.req.query('kind');
   const source = c.req.query('source');

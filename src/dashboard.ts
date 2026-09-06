@@ -2,7 +2,12 @@
  * 公开画廊页（只读）：等宽瀑布流提示词画廊。
  * 布局：JS 均衡瀑布流（列宽一致、按最短列填充，铺满整行不留空）；封面图按原始比例缩放。
  * 预览：图像封面点击进入灯箱（←/→ 切换、Esc 关闭）。
- * 性能：分页懒加载 + DOM 窗口上限（最多 MAX_NODES 张卡片，滚动换页时移出界外节点并保持滚动位置）。
+ * 性能（双层懒加载）：
+ *  - 数据层：服务端分页窗口（每页 PAGE 条、窗口上限 MAX_WIN 条），滚动到底扩展 / 回到顶部回缩，
+ *    5s 轮询只取当前窗口，位移用「锚点槽位」补偿保持视觉位置；
+ *  - DOM 层：视窗虚拟化 —— 槽位进入视窗 700px 内才挂载真实卡片、离开 1600px 外卸载为等高占位，
+ *    挂载/卸载的高度测量合并进 rAF 批处理（避免读写交替反复强制重排），
+ *    高度漂移触发的重新分列去抖到滚动停歇后执行，且只移动换列的槽位。
  * 管理功能（设置 / LLM 配置 / 生成 / 清理）全部在 /admin（需登录）。
  */
 import { uiCss, utilClientJs } from './ui.js';
@@ -17,11 +22,14 @@ export function dashboardHtml(): string {
 ${uiCss}
 /* 画廊专有：等宽瀑布流（JS 均衡分列）与封面占位 */
 a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
-.wall{display:flex;gap:14px;align-items:flex-start;padding:4px 22px 40px;min-height:50vh}
+.wall{display:flex;gap:14px;align-items:flex-start;padding:4px 22px 40px;min-height:50vh;overflow-anchor:none}
 .col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:14px}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;transition:border-color .18s,transform .18s,box-shadow .18s}
 .card:hover{border-color:#3d3d3d;transform:translateY(-1px);box-shadow:0 8px 24px rgba(0,0,0,.5)}
 .card.failed{border-color:#4a1d24}
+/* 视窗虚拟化：槽位 = 真实卡片 或 等高占位（不画边框，只撑高度） */
+.slot{min-height:1px}
+.ph-card{border-radius:12px;background:rgba(255,255,255,.025)}
 .cover{position:relative;overflow:hidden}
 .cover.image:not(.hasimg){aspect-ratio:4/3;background:radial-gradient(120% 100% at 20% 0%,#1b1b2e 0%,#141422 45%,#101018 100%)}
 .cover.video{aspect-ratio:16/9;background:radial-gradient(120% 100% at 85% 10%,#2a1430 0%,#1a1426 48%,#0f0f16 100%)}
@@ -63,7 +71,7 @@ a.btn{display:inline-flex;align-items:center;justify-content:center;text-decorat
 .lb .lb-x{position:absolute;top:16px;right:18px}
 .lb .lb-pv,.lb .lb-nx{position:absolute;top:50%;transform:translateY(-50%)}
 .lb .lb-pv{left:18px}.lb .lb-nx{right:18px}
-/* 懒加载哨兵 */
+/* 分页懒加载哨兵 */
 .sent{height:1px}
 .sent-load{padding:14px 0 64px;text-align:center;color:var(--faint);font-size:12px;display:none}
 .sent-load.on{display:block}
@@ -96,13 +104,14 @@ a.btn{display:inline-flex;align-items:center;justify-content:center;text-decorat
 <script>
 ${utilClientJs}
 const $=s=>document.querySelector(s),wall=$('#wall'),count=$('#count'),sentT=$('#sent-top'),sentB=$('#sent-bottom'),sentLoad=$('#sent-load');
-/* 懒加载参数：每页 PAGE 条；DOM 窗口最多 MAX_NODES 张卡片，超出后滚动向下时移出最旧的、向上滚回时重新载入 */
-const PAGE=30,MAX_NODES=120;
-let list=[],total=0,filter='all',winStart=0,winEnd=0,loading=false,lastSig='';
+/* 懒加载参数：数据窗口每页 PAGE 条、最多 MAX_WIN 条（滚动按需扩展/回缩）；
+   DOM 槽位只有接近视窗才挂载真实卡片，远离后卸载为等高占位（最近实测高度），滚动位置不跳 */
+const PAGE=30,MAX_WIN=120,MOUNT_MARGIN=700,UNMOUNT_MARGIN=1600;
+let list=[],total=0,filter='all',loading=false,lastIds='',winStart=0,winEnd=0;
 const KIND={image:{n:'图像',ic:'image'},video:{n:'视频',ic:'video'}};
 const SRC={hot_topic:'热点',hot_image:'热图',original_idea:'原创点子'};
 const ST={queued:'排队中',running:'生成中',ready:'提示词就绪',failed:'失败'};
-const heights=new Map(),nodes=new Map(),expanded=new Set();
+const heights=new Map(),slots=new Map(),expanded=new Set();
 
 function promptHtml(i){
   const text=esc(i.prompt);
@@ -146,7 +155,7 @@ let lbList=[],lbIndex=0;
 function renderLb(){
   const it=lbList[lbIndex];if(!it){closeLb();return;}
   lbImg.src='/api/images/'+it.cover.file;
-  lbCap.textContent=it.idea||'';
+  lbCap.textContent=it.title||it.idea||'';
   const one=lbList.length<2;
   lb.querySelector('.lb-pv').style.visibility=one?'hidden':'visible';
   lb.querySelector('.lb-nx').style.visibility=one?'hidden':'visible';
@@ -194,7 +203,7 @@ function makeCard(i){
   const srcNote=(i.material&&(i.material.label||i.material.note))?'<div class="desc">'+(i.material.url?'<a href="'+esc(i.material.url)+'" target="_blank" rel="noopener">'+esc(i.material.label)+' ↗</a>':'')+(i.material.label&&!i.material.url?esc(i.material.label):'')+(i.material.note?' <span style="opacity:.7">· '+esc(i.material.note)+'</span>':'')+'</div>':'';
   const isOpen=expanded.has(i.id);
   el.innerHTML=coverHtml(i)+
-    '<div class="body">'+(i.idea?'<h3>'+esc(i.idea)+'</h3>':'')+srcNote+
+    '<div class="body">'+(i.title||i.idea?'<h3>'+esc(i.title||i.idea)+'</h3>':'')+srcNote+
     (i.error?'<div class="err">✕ '+esc(i.error)+'</div>':'')+
     (i.prompt?'<div class="mono'+(isOpen?' open':'')+'">'+promptHtml(i)+'</div>':'')+
     '<div class="tags"><span class="tag acc">'+esc(i.theme)+'</span>'+(isVid?'<span class="tag">T2VA · 16:9</span>':'<span class="tag">文生图</span>')+'<span class="tag">'+esc(i.status==='failed'?'失败':'ready 提示词')+'</span></div>'+
@@ -206,7 +215,7 @@ function makeCard(i){
       if(img.naturalWidth){
         const w=el.querySelector('.imgwrap');
         if(w)w.style.setProperty('--ar',img.naturalWidth+'/'+img.naturalHeight);
-        scheduleLayout();
+        queueMeasure(el);
       }
     });
   }
@@ -225,50 +234,152 @@ window.expand=btn=>{
   const id=card.dataset.id;const m=card.querySelector('.mono');if(!m)return;
   if(expanded.has(id)){expanded.delete(id);m.classList.remove('open');btn.textContent='展开';}
   else{expanded.add(id);m.classList.add('open');btn.textContent='收起';}
+  queueMeasure(card);
 };
 
-/* ===== 等宽瀑布流布局：列数随宽度取整，卡片放入当前最短列 → 铺满整行不留空 ===== */
-let wallW=0,colEls=[],rafPending=false;
+/* ===== DOM 读写批处理：挂载/卸载/测高合并进 rAF，一帧最多两次强制重排 ===== */
+const mountQ=new Set(),unmountQ=new Set();
+let domRaf=0;
+function scheduleDomFlush(){
+  if(domRaf)return;
+  domRaf=requestAnimationFrame(()=>{domRaf=0;flushDom();});
+}
+function flushDom(){
+  /* 先统一读（卸载前测高），再统一写（占位替换），最后统一测新挂载卡片 */
+  const hs=[];
+  for(const s of unmountQ){
+    const c=s.querySelector('.card');
+    if(c&&s.isConnected)hs.push([s,c.offsetHeight]);
+  }
+  unmountQ.clear();
+  for(const [s,h] of hs){
+    if(h)heights.set(s.dataset.id,h);
+    s.innerHTML=phHtml(h);
+  }
+  for(const c of mountQ){if(c.isConnected)measureNow(c);}
+  mountQ.clear();
+}
+function queueMeasure(card){mountQ.add(card);scheduleDomFlush();}
+function measureNow(card){
+  const h=card.offsetHeight;if(!h)return;
+  const id=card.dataset.id,prev=heights.get(id);
+  heights.set(id,h);
+  if(prev===undefined||Math.abs(prev-h)>4)scheduleRebalance();
+}
+
+/* ===== 等宽瀑布流布局：列数随宽度取整，槽位放入当前最短列 → 铺满整行不留空 ===== */
+let wallW=0,colW=320,colEls=[],rbTimer=0;
 function colCountFor(w){return Math.max(1,Math.min(6,Math.floor(w/300)||1));}
-function scheduleLayout(){if(rafPending)return;rafPending=true;requestAnimationFrame(()=>{rafPending=false;layout();});}
-function place(win){
-  const n=colEls.length,hs=colEls.map(()=>0);
-  for(const it of win){
+/* 估高：封面按类型比例 + 正文常量；首次实测后以 heights 缓存为准 */
+function estimateH(it){
+  const cover=it.kind==='video'?colW*9/16:colW*3/4;
+  return Math.round(cover+240);
+}
+function sigOfItem(i){
+  return [i.status,i.title||'',i.idea,i.error||'',i.cover&&i.cover.file,i.coverError||'',i.prompt?i.prompt.length:0,(i.pictures||[]).map(p=>p.index+(p.imagePrompt?1:0)).join(',')].join('|');
+}
+function phHtml(h){return '<div class="ph-card" style="height:'+Math.max(80,Math.round(h||estimateH({kind:'image'})))+'px"></div>';}
+function slotFor(it){
+  let s=slots.get(it.id);
+  if(s)return s;
+  s=document.createElement('div');s.className='slot';s.dataset.id=it.id;s.dataset.sig=sigOfItem(it);
+  s.innerHTML=phHtml(heights.get(it.id));
+  slots.set(it.id,s);
+  if(mountIO)mountIO.observe(s);
+  if(unmountIO)unmountIO.observe(s);
+  return s;
+}
+function place(items){
+  const n=colEls.length;if(!n)return;
+  const hs=colEls.map(()=>0),want=colEls.map(()=>[]);
+  for(const it of items){
     let mi=0;for(let i=1;i<n;i++)if(hs[i]<hs[mi])mi=i;
-    const el=nodes.get(it.id);colEls[mi].appendChild(el);
-    hs[mi]+=heights.get(it.id)||430;
+    want[mi].push(slotFor(it).dataset.id);
+    hs[mi]+=heights.get(it.id)||estimateH(it);
+  }
+  /* 逐列做前缀对比，只挪动缺失/换列的槽位；appendChild 顺序即目标顺序 */
+  for(let ci=0;ci<n;ci++){
+    const col=colEls[ci],desired=want[ci],cur=[...col.children].map(c=>c.dataset.id);
+    let k=0;while(k<cur.length&&k<desired.length&&cur[k]===desired[k])k++;
+    if(k===cur.length&&k===desired.length)continue;
+    for(let i=k;i<desired.length;i++){const s=slots.get(desired[i]);if(s)col.appendChild(s);}
   }
 }
+/* 高度漂移的重新均衡：去抖到滚动停歇后执行，避免滚动期间反复全量重排 */
+function scheduleRebalance(){clearTimeout(rbTimer);rbTimer=setTimeout(()=>{if(colEls.length&&!document.hidden)place(list);},500);}
 function layout(){
   wallW=wall.clientWidth||innerWidth-44;
   const n=colCountFor(wallW);
-  wall.innerHTML='';colEls=[];
-  for(let i=0;i<n;i++){const c=document.createElement('div');c.className='col';wall.appendChild(c);colEls.push(c);}
-  if(!list.length){
-    wall.innerHTML='<div class="empty">暂无灵感<br><small>管理员登录「管理后台」后点击立即生成，或等待定时任务</small></div>';
-    colEls=[];return;
+  colW=n?(wallW-14*(n-1))/n:320;
+  /* 列数不变时复用列容器；列数变化才重建（槽位节点常驻，appendChild 移动即可） */
+  if(colEls.length!==n){
+    for(const c of colEls)c.remove();
+    colEls=[];
+    for(let i=0;i<n;i++){const c=document.createElement('div');c.className='col';wall.appendChild(c);colEls.push(c);}
   }
-  for(const it of list){
-    if(!nodes.has(it.id))nodes.set(it.id,makeCard(it));
+  if(!list.length){
+    for(const [,s] of slots){if(mountIO)mountIO.unobserve(s);if(unmountIO)unmountIO.unobserve(s);}
+    slots.clear();
+    for(const c of colEls)c.remove();
+    colEls=[];
+    wall.innerHTML='<div class="empty">暂无灵感<br><small>管理员登录「管理后台」后点击立即生成，或等待定时任务</small></div>';
+    return;
+  }
+  const ids=new Set(list.map(x=>x.id));
+  for(const [id,s] of slots){
+    if(!ids.has(id)){if(mountIO)mountIO.unobserve(s);if(unmountIO)unmountIO.unobserve(s);s.remove();slots.delete(id);}
   }
   place(list);
-  /* 实测高度回填；与估高偏差明显（如图片按原始比例撑开）时重排一次 */
-  let drift=false;
-  for(const it of list){
-    const el=nodes.get(it.id),h=el.offsetHeight;
-    if(!h)continue;
-    const prev=heights.get(it.id);
-    if(prev===undefined||Math.abs(prev-h)>4){heights.set(it.id,h);drift=true;}
-  }
-  if(drift){for(const c of colEls)c.innerHTML='';place(list);}
-}
-function updateCount(){
-  let t=total+' 条提示词';
-  if(total>0&&(winStart>0||winEnd<total))t+=' · 已载 '+(winStart+1)+'–'+winEnd;
-  count.textContent=t;
+  if(!mountIO)sweepSlots();
 }
 
-/* ===== 数据加载：服务端分页 + DOM 窗口上限 ===== */
+/* ===== 视窗挂载/卸载：进入视窗 MOUNT_MARGIN 内挂载真实卡片，离开 UNMOUNT_MARGIN 外卸载 ===== */
+function mountSlot(s){
+  if(s.querySelector('.card'))return;
+  const it=list.find(x=>x.id===s.dataset.id);if(!it)return;
+  s.innerHTML='';
+  s.appendChild(makeCard(it));
+  queueMeasure(s.firstElementChild);
+  scheduleDomFlush();
+}
+function unmountSlot(s){
+  if(!s.querySelector('.card'))return;
+  unmountQ.add(s);
+  scheduleDomFlush();
+}
+const hasIO='IntersectionObserver' in window;
+const mountIO=hasIO?new IntersectionObserver(es=>{
+  for(const e of es)if(e.isIntersecting)mountSlot(e.target);
+},{rootMargin:MOUNT_MARGIN+'px 0px'}):null;
+const unmountIO=hasIO?new IntersectionObserver(es=>{
+  for(const e of es)if(!e.isIntersecting)unmountSlot(e.target);
+},{rootMargin:UNMOUNT_MARGIN+'px 0px'}):null;
+/* 无 IntersectionObserver 的兜底：按滚动位置扫描（节流） */
+function sweepSlots(){
+  for(const s of slots.values()){
+    const r=s.getBoundingClientRect();
+    if(r.top<innerHeight+MOUNT_MARGIN&&r.bottom>-MOUNT_MARGIN)mountSlot(s);
+    else if(r.top>innerHeight+UNMOUNT_MARGIN||r.bottom<-UNMOUNT_MARGIN)unmountSlot(s);
+  }
+}
+if(!hasIO){
+  let fbTimer=0;
+  const sweep=()=>{clearTimeout(fbTimer);fbTimer=setTimeout(sweepSlots,150);};
+  window.addEventListener('scroll',sweep,{passive:true});
+  window.addEventListener('resize',sweep);
+}
+
+/* ===== 单条内容变化（状态翻转 / 封面就绪 / 提示词更新）：已挂载时只重建那张卡片 ===== */
+function refreshSlot(s,it){
+  s.dataset.sig=sigOfItem(it);
+  if(!s.querySelector('.card'))return;
+  s.innerHTML='';
+  s.appendChild(makeCard(it));
+  queueMeasure(s.firstElementChild);
+  scheduleDomFlush();
+}
+
+/* ===== 数据加载：服务端分页窗口 + 5s 轮询（仅当前窗口、页面隐藏时跳过） ===== */
 function windowUrl(){
   const q=new URLSearchParams();
   if(filter!=='all')q.set('kind',filter);
@@ -276,57 +387,98 @@ function windowUrl(){
   q.set('limit',String(Math.max(1,winEnd-winStart)));
   return '/api/inspirations?'+q.toString();
 }
-function sigOf(items){
-  return items.map(i=>[i.id,i.status,i.idea,i.error,i.cover&&i.cover.file,i.coverError||'',i.prompt?i.prompt.length:0,(i.pictures||[]).map(p=>p.index+(p.imagePrompt?1:0)).join(',')].join('|')).join(';');
-}
 async function fetchWindow(){
   const res=await fetch(windowUrl());
   total=Number(res.headers.get('X-Total-Count'))||0;
   return res.json();
 }
-function applyWindow(data,force){
-  list=data;
-  const s=sigOf(list);
-  if(force||s!==lastSig){
-    lastSig=s;
-    if(list.length&&winStart>=total){winStart=Math.max(0,total-1);winEnd=Math.min(total,winStart+(winEnd-winStart));}
-    layout();updateCount();
-  }else{total=total;updateCount();}
+function updateCount(){
+  let t=total+' 条提示词';
+  if(total>0&&(winStart>0||winEnd<total))t+=' · 已载 '+(winStart+1)+'–'+winEnd;
+  if(count.textContent!==t)count.textContent=t;
 }
 async function loadWindow(reset){
-  if(loading)return;loading=true;sentLoad.classList.add('on');
+  if(loading)return;loading=true;
+  if(!list.length)sentLoad.classList.add('on'); // 仅首屏无数据时显示加载指示，避免轮询时闪烁
   try{
     if(reset){
       winStart=0;winEnd=PAGE*2;
-      nodes.clear();heights.clear();lastSig='';
+      for(const [,s] of slots){if(mountIO)mountIO.unobserve(s);if(unmountIO)unmountIO.unobserve(s);}
+      slots.clear();lastIds='';
     }
-    const data=await fetchWindow();
-    if(reset)winEnd=Math.min(winEnd,total);
+    let data=await fetchWindow();
     if(!Array.isArray(data))return;
-    applyWindow(data,reset);
+    if(reset)winEnd=Math.min(winEnd,total);
+    /* 窗口越界（记录被删）：窗口回缩后重取一次 */
+    if(!data.length&&total>0&&winStart>0){
+      winStart=Math.max(0,total-(winEnd-winStart));winEnd=total;
+      data=await fetchWindow();
+      if(!Array.isArray(data))return;
+    }
+    list=data;
+    const ids=list.map(x=>x.id).join(',');
+    if(ids!==lastIds||list.some(x=>{const s=slots.get(x.id);return !s||s.dataset.sig!==sigOfItem(x);})){
+      lastIds=ids;
+      for(const x of list){const s=slots.get(x.id);if(s&&s.dataset.sig!==sigOfItem(x))refreshSlot(s,x);}
+      layout();
+    }
+    updateCount();
   }catch(e){}finally{loading=false;sentLoad.classList.remove('on');}
 }
-/* 翻页换窗时保持视觉位置：布局前后文档高度差补偿 scrollTop */
-async function shiftPreserving(fn){
-  const sy=window.scrollY,bh=document.documentElement.scrollHeight;
-  await fn();
-  const ah=document.documentElement.scrollHeight;
-  if(ah!==bh)window.scrollTo(0,sy+ah-bh);
+
+/* ===== 翻页换窗：用「锚点槽位」补偿滚动位置（内容上方增删时不跳动） ===== */
+function anchorTop(){
+  for(const it of list){
+    const s=slots.get(it.id);if(!s)continue;
+    const r=s.getBoundingClientRect();
+    if(r.bottom>60)return{id:it.id,top:r.top};
+  }
+  return null;
 }
-async function extend(){
-  if(loading||winEnd>=total)return;
-  const newEnd=Math.min(total,winEnd+PAGE);
-  let newStart=winStart;
-  if(newEnd-newStart>MAX_NODES)newStart=newEnd-MAX_NODES;
-  winStart=newStart;winEnd=newEnd;
-  await shiftPreserving(()=>loadWindow(false));
+function restoreAnchor(a,compensate){
+  if(!a||!compensate)return;
+  const el=slots.get(a.id);
+  if(!el||!el.isConnected)return;
+  const d=el.getBoundingClientRect().top-a.top;
+  if(Math.abs(d)>1)window.scrollTo(0,window.scrollY+d);
 }
-async function retract(){
-  if(loading||winStart<=0)return;
-  const size=winEnd-winStart,newStart=Math.max(0,winStart-PAGE);
-  winStart=newStart;winEnd=Math.min(total,newStart+Math.max(size,PAGE));
-  await shiftPreserving(()=>loadWindow(false));
+/* 换窗泵：只要哨兵仍在触达范围（含「钉在页底/页顶」的持续状态）就连续换窗，
+   直到哨兵远离或数据到底；有加载进行中（如 5s 轮询）时等待其完成而不是放弃，
+   避免「加载期间到达的触发被丢弃 + 哨兵无新交叉事件」导致的停摆 */
+let pumpingDown=false,pumpingUp=false;
+async function pumpBottom(){
+  if(pumpingDown)return;pumpingDown=true;
+  try{
+    for(let guard=0;guard<60;guard++){
+      if(loading){await new Promise(r=>setTimeout(r,100));continue;}
+      if(winEnd>=total||sentB.getBoundingClientRect().top>=innerHeight+400)break;
+      const newEnd=Math.min(total,winEnd+PAGE);
+      let newStart=winStart;
+      if(newEnd-newStart>MAX_WIN)newStart=newEnd-MAX_WIN;
+      winStart=newStart;winEnd=newEnd;
+      const a=anchorTop();
+      await loadWindow(false);
+      restoreAnchor(a,true);
+    }
+  }finally{pumpingDown=false;}
 }
+async function pumpTop(){
+  if(pumpingUp)return;pumpingUp=true;
+  try{
+    for(let guard=0;guard<60;guard++){
+      if(loading){await new Promise(r=>setTimeout(r,100));continue;}
+      if(winStart<=0||sentT.getBoundingClientRect().bottom<=-400)break;
+      const size=winEnd-winStart,newStart=Math.max(0,winStart-PAGE);
+      winStart=newStart;winEnd=Math.min(total,newStart+Math.max(size,PAGE));
+      const a=anchorTop();
+      await loadWindow(false);
+      /* 已在页面顶部附近时不补偿：让用户直达最新的记录 */
+      restoreAnchor(a,window.scrollY>=120);
+    }
+  }finally{pumpingUp=false;}
+}
+function extend(){pumpBottom();}
+function retract(){pumpTop();}
 const io='IntersectionObserver' in window?new IntersectionObserver(es=>{
   for(const e of es){
     if(!e.isIntersecting)continue;
@@ -337,12 +489,21 @@ if(io){io.observe(sentB);io.observe(sentT);}
 else window.addEventListener('scroll',()=>{
   if(scrollY+innerHeight>document.documentElement.scrollHeight-400)extend();
   if(scrollY<80&&winStart>0)retract();
-});
+},{passive:true});
+/* 兜底邻近检查：IO 只在交叉状态跃迁时回调，快速滚动或钉在页底/页顶时可能错过跃迁；
+   滚动事件本身不会丢，配合泵循环（钉住时自持）覆盖全部到达路径 */
+let proxTimer=0;
+function proximityCheck(){
+  if(winEnd<total&&sentB.getBoundingClientRect().top<innerHeight+400)extend();
+  else if(winStart>0&&sentT.getBoundingClientRect().bottom>-400)retract();
+}
+window.addEventListener('scroll',()=>{clearTimeout(proxTimer);proxTimer=setTimeout(proximityCheck,120);},{passive:true});
+window.addEventListener('resize',()=>{clearTimeout(proxTimer);proxTimer=setTimeout(proximityCheck,120);});
 
 let rsTimer=0;
 window.addEventListener('resize',()=>{
   clearTimeout(rsTimer);
-  rsTimer=setTimeout(()=>{wallW=0;scheduleLayout();},150);
+  rsTimer=setTimeout(()=>{wallW=0;layout();},150);
 });
 
 document.querySelector('.filters').addEventListener('click',e=>{
@@ -356,7 +517,7 @@ wall.addEventListener('click',e=>{
 });
 
 loadWindow(true);
-setInterval(()=>loadWindow(false),5000);
+setInterval(()=>{if(!document.hidden)loadWindow(false);},5000);
 </script>
 </body></html>`;
 }
