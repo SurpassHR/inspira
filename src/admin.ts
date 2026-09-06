@@ -481,6 +481,7 @@ body{overflow:hidden}
   <div class="modal wide">
     <div class="mhead"><h2 id="dtitle">灵感详情</h2><button class="x" id="dclose" type="button" aria-label="关闭">✕</button></div>
     <div class="dmodal-meta" id="dmeta"></div>
+    <div id="didea" style="display:none"></div>
     <img class="dcover" id="dcover" style="display:none" alt="封面">
     <div class="err" id="derr" style="display:none"></div>
     <div class="mono mono-pane" id="dprompt" style="display:none"></div>
@@ -897,7 +898,7 @@ function renderInspRows(){
     '<td>'+esc(KIND[i.kind]?KIND[i.kind].n:i.kind)+'</td>'+
     '<td>'+esc(SRC[i.source]||i.source)+'</td>'+
     '<td><span class="tag acc">'+esc(i.theme||'')+'</span></td>'+
-    '<td class="tt" title="'+esc(i.idea||'')+'">'+esc(i.idea||'—')+'</td>'+
+    '<td class="tt" title="'+esc(i.idea||'')+'">'+esc(i.title||i.idea||'—')+'</td>'+
     '<td><span class="st-dot '+esc(i.status)+'"><i></i>'+esc(ST[i.status]||i.status)+'</span></td>'+
     '<td class="act"><button class="btn sm ghost" data-a="view">查看</button>'+
     (i.prompt?'<button class="btn sm ghost" data-a="copy">复制</button>':'')+
@@ -954,6 +955,9 @@ function openDetail(item){
     '<span class="tag">'+esc(SRC[item.source]||item.source)+'</span>',
     '<span class="tag">'+esc(ST[item.status]||item.status)+'</span>'].join('');
   $('#dmeta').innerHTML=meta;
+  const didea=$('#didea');
+  if(item.title||item.idea){didea.style.display='';didea.innerHTML='<div style="font-weight:600;margin-bottom:2px">'+esc(item.title||'')+'</div><div class="desc">'+esc(item.idea||'')+'</div>';}
+  else{didea.style.display='none';didea.innerHTML='';}
   const cov=$('#dcover');
   if(item.kind==='image'&&item.cover&&item.cover.file){cov.style.display='block';cov.src='/api/images/'+esc(item.cover.file);}
   else{cov.style.display='none';cov.src='';}

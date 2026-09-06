@@ -30,10 +30,24 @@ test('成功路径：idea + prompt 来自 LLM，剥离代码围栏，状态 read
   const item = await generateInspiration(defaultSettings, seed, deps);
   assert.equal(item.status, 'ready');
   assert.equal(item.idea, '雨夜里的霓虹书店');
+  assert.equal(item.title, undefined); // 无「标题：」行时回退为纯点子，不写 title
   assert.equal(item.prompt, 'The final English image prompt paragraph.');
   assert.equal(item.theme, '自然');
   assert.equal(item.id, 's1');
   assert.ok(item.updatedAt);
+});
+
+test('idea 双行格式：解析出短标题 title，prompt 阶段仍接收完整点子', async () => {
+  const seen: string[] = [];
+  const deps = imageDeps({
+    idea: async () => '标题：雨夜霓虹书店的猫店长\n点子：霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。',
+    prompt: async (_k, _t, idea) => { seen.push(idea); return 'P'; },
+  });
+  const item = await generateInspiration(defaultSettings, seed, deps);
+  assert.equal(item.status, 'ready');
+  assert.equal(item.title, '雨夜霓虹书店的猫店长');
+  assert.equal(item.idea, '霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。');
+  assert.deepEqual(seen, ['霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。']);
 });
 
 test('createSeed 只从已激活主题子集随机取（未勾选的不参与）', () => {

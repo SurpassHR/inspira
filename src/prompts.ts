@@ -80,10 +80,9 @@ export const systemPrompts: Record<InspirationKind, string> = {
 
 const IDEA_SYSTEM = `你是一个“灵感点子师”，服务于自动化的灵感生成系统。
 根据给定的主题与素材（素材可能来自网络热点、网络图像，也可能为空），产出一个有画面感、可被图像/视频生成模型呈现的具体创意点子。
-要求：
-- 用中文输出，1~2 句话，聚焦一个具体、可描绘的画面或镜头
-- 有明确的视觉/情境细节，不要空泛概括
-- 只输出点子本身，不要解释、前缀或列表`;
+严格要求按以下两行格式输出，不要任何解释、前后缀或列表：
+标题：一个 10~15 个汉字的中文短标题，凝练、有画面感，不超过 15 个汉字
+点子：1~2 句话描述具体创意，聚焦一个可描绘的画面或镜头，有明确的视觉/情境细节，不要空泛概括`;
 
 function materialLines(material: SourceMaterial): string {
   const lines = [
@@ -103,8 +102,20 @@ export function buildIdeaPrompt(theme: string, material: SourceMaterial): ChatMe
   const user = `关注主题：${theme}
 ${materialBlock || '无外部素材，请围绕主题自由发挥创意。'}
 
-请输出创意点子（中文，1~2 句话）。`;
+请按要求的两行格式输出（标题 10~15 个汉字；点子 1~2 句话）。`;
   return [{ role: 'system', content: IDEA_SYSTEM }, { role: 'user', content: user }];
+}
+
+/** 解析点子步骤的 LLM 输出（“标题：…” + “点子：…”两行格式）。
+ *  没有标题行时整体回退为点子正文、title 为空（兼容旧模型输出/测试桩）。 */
+export function splitIdeaOutput(raw: string): { title: string; idea: string } {
+  const text = raw.trim();
+  const m = text.match(/^[ \t]*标题[ \t]*[:：][ \t]*(.+)$/m);
+  if (!m) return { title: '', idea: text };
+  const title = m[1]!.trim();
+  const rest = text.slice((m.index ?? 0) + m[0].length).trim();
+  const idea = rest.replace(/^(?:点子|创意|描述)[ \t]*[:：][ \t]*/, '').trim();
+  return { title, idea: idea || title };
 }
 
 export function buildPromptPrompt(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial): ChatMessage[] {

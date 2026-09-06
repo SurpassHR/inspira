@@ -143,6 +143,9 @@ export interface Inspiration {
   kind: InspirationKind;
   source: InspirationSource;
   theme: string;
+  /** 展示用中文短标题（10~15 字，点子步骤 LLM 产出；旧数据/解析失败时缺省，展示回退到 idea） */
+  title?: string;
+  /** 完整中文创意点子（提示词生成的核心输入，比 title 更详细） */
   idea: string;
   prompt: string;
   status: InspirationStatus;

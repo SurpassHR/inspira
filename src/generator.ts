@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describeError } from './errors.js';
 import { generateAndSaveImage } from './images.js';
 import { chatCompletion, ImageGenNotConfiguredError, type ChatMessage } from './llm.js';
-import { buildIdeaPrompt, buildPicturePrompt, buildPromptPrompt } from './prompts.js';
+import { buildIdeaPrompt, buildPicturePrompt, buildPromptPrompt, splitIdeaOutput } from './prompts.js';
 import { resolveSourceMaterial } from './sources/index.js';
 import type { Inspiration, InspirationCover, InspirationKind, InspirationSettings, InspirationSource, PictureRef, SourceMaterial } from './types.js';
 
@@ -90,7 +90,8 @@ export async function generateInspiration(settings: InspirationSettings, seed: I
   };
   try {
     const material = await deps.material(seed.source, seed.theme);
-    const idea = (await deps.idea(material, seed.theme)).trim();
+    // 点子步骤产出「标题（10~15 字，展示用）+ 点子正文（喂给提示词生成）」；解析失败时 title 缺省
+    const { title, idea } = splitIdeaOutput(stripCodeFences((await deps.idea(material, seed.theme)).trim()));
     const prompt = stripCodeFences(await deps.prompt(seed.kind, seed.theme, idea, material));
     // 视频提示词保留 <Picture N> 引用，并为每个引用生成配套英文生图提示词；
     // 单个参考画面的提示词生成失败不影响整条灵感（该画面 imagePrompt 留空）
@@ -123,7 +124,7 @@ export async function generateInspiration(settings: InspirationSettings, seed: I
         }
       }
     }
-    return { ...base, idea, prompt, cover, coverError, pictures, material, status: 'ready', updatedAt: new Date().toISOString() };
+    return { ...base, title: title || undefined, idea, prompt, cover, coverError, pictures, material, status: 'ready', updatedAt: new Date().toISOString() };
   } catch (err) {
     const message = describeError(err);
     console.error('[inspira] 生成失败', { id: seed.id, kind: seed.kind, source: seed.source, error: message });
