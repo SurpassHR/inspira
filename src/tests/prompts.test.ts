@@ -97,6 +97,40 @@ test('buildPicturePrompt：携带画面描述并复用 krea2 系统提示词', (
   assert.ok(msgs[1]!.content.includes('文生图模型'));
 });
 
+test('buildPromptPrompt：风格只注入图像分支，视频正文保持 mmh3 规范', () => {
+  const mat = { source: 'original_idea' as const, label: '原创点子' };
+  const img = buildPromptPrompt('image', '自然', '海岸上的发光线', mat, 'anime');
+  has(img[1]!.content, '画面风格：anime');
+  has(img[1]!.content, '统一体现上述画面风格');
+  const vid = buildPromptPrompt('video', '都市', '雨夜霓虹书店', mat, 'anime');
+  assert.ok(!vid[1]!.content.includes('画面风格'), '视频提示词正文不注入风格行');
+  // 未指定风格（激活子集为空）时不出现风格行与风格指令
+  const noStyle = buildPromptPrompt('image', '自然', '海岸上的发光线', mat);
+  assert.ok(!noStyle[1]!.content.includes('画面风格'));
+  assert.ok(!noStyle[1]!.content.includes('统一体现上述画面风格'));
+});
+
+test('buildPicturePrompt：风格注入参考画面生图提示词，未指定时不注入', () => {
+  const withStyle = buildPicturePrompt('A dim neon-lit bookstore interior', '都市', '雨夜霓虹书店里的钢琴师', 'noir');
+  has(withStyle[1]!.content, '画面风格：noir');
+  const noStyle = buildPicturePrompt('A dim neon-lit bookstore interior', '都市', '雨夜霓虹书店里的钢琴师');
+  assert.ok(!noStyle[1]!.content.includes('画面风格'));
+});
+
+test('buildPromptPrompt：画面比例只注入图像分支并带构图指令，视频分支不注入', () => {
+  const mat = { source: 'original_idea' as const, label: '原创点子' };
+  const portrait = buildPromptPrompt('image', '自然', '海岸上的发光线', mat, undefined, '3:4');
+  has(portrait[1]!.content, '画面比例：3:4');
+  has(portrait[1]!.content, '竖构图');
+  const square = buildPromptPrompt('image', '自然', '海岸上的发光线', mat, undefined, '1:1');
+  has(square[1]!.content, '画面比例：1:1');
+  has(square[1]!.content, '方构图');
+  const vid = buildPromptPrompt('video', '都市', '雨夜霓虹书店', mat, undefined, '9:16');
+  assert.ok(!vid[1]!.content.includes('画面比例'), '视频固定 16:9 由 mmh3 规范决定，不注入比例行');
+  const noAspect = buildPromptPrompt('image', '自然', '海岸上的发光线', mat);
+  assert.ok(!noAspect[1]!.content.includes('画面比例'));
+});
+
 test('mmh3 系统提示词：保留 <Picture N> 引用能力而非禁用', () => {
   const p = systemPrompts.video;
   has(p, '<Picture N>');

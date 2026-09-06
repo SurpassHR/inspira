@@ -34,12 +34,24 @@ export async function readInspirationImage(name: string): Promise<{ bytes: Buffe
   }
 }
 
+/** 把 W:H 画面比例映射为 OpenAI 兼容 images 接口的标准 size
+ *  （横 1536x1024 / 竖 1024x1536 / 方 1024x1024）；缺失或非法格式返回 undefined = 不传 size */
+function aspectToSize(aspect?: string): string | undefined {
+  const m = /^([0-9]+):([0-9]+)$/.exec((aspect ?? '').trim());
+  if (!m) return undefined;
+  const w = Number(m[1]!), h = Number(m[2]!);
+  if (!w || !h) return undefined;
+  if (w === h) return '1024x1024';
+  return w > h ? '1536x1024' : '1024x1536';
+}
+
 /**
  * 「生图」任务的实际入口：调 OpenAI 兼容 images 接口并把落盘文件名交给灵感 cover 字段。
- * 未分配生图模型时抛 ImageGenNotConfiguredError（generator 静默跳过）。
+ * aspect（画面比例）映射为请求 size，使封面图与提示词构图一致；未分配生图模型时抛
+ * ImageGenNotConfiguredError（generator 静默跳过）。
  */
-export async function generateAndSaveImage(prompt: string, id: string): Promise<{ file: string; model: string }> {
-  const img = await generateImage(prompt);
+export async function generateAndSaveImage(prompt: string, id: string, aspect?: string): Promise<{ file: string; model: string }> {
+  const img = await generateImage(prompt, { size: aspectToSize(aspect) });
   const file = await saveInspirationImage(id, img.bytes, img.ext);
   return { file, model: img.model };
 }

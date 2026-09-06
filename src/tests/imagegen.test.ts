@@ -102,6 +102,61 @@ test('generateImage：POST {base}/images/generations，b64_json 响应解码为 
   }
 });
 
+test('generateImage：携带 size 时随请求发送；端点 400 拒绝 size 时自动去参重试成功', async () => {
+  const h = await startServer((req, res, body) => {
+    if (req.method === 'POST' && req.url === '/v1/images/generations') {
+      if (body && typeof (body as { size?: string }).size === 'string') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'size is not supported for this model', type: 'invalid_request_error' } }));
+      } else {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }));
+      }
+    } else { res.writeHead(404); res.end('{}'); }
+  });
+  try {
+    await llmcfg.saveLlmProvider({ id: 'ig', name: '生图中转', kind: 'openai_compat', apiKey: 'sk-imagegen-key', baseUrl: `http://127.0.0.1:${h.port}/v1`, models: ['img-model'] });
+    await assignImageGen('ig', 'img-model');
+    const r = await generateImage('prompt', { size: '1024x1536' });
+    assert.equal(r.ext, 'png');
+    // 第一次带 size 被拒 → 去掉 size 再试成功，不落入 chat 兜底
+    assert.deepEqual(h.requests.map((q) => q.url), ['/v1/images/generations', '/v1/images/generations']);
+    assert.equal(h.requests[0]!.body && (h.requests[0]!.body as { size?: string }).size, '1024x1536');
+    assert.equal(h.requests[1]!.body && (h.requests[1]!.body as { size?: string }).size, undefined);
+  } finally {
+    h.server.close();
+    await assignImageGen(null);
+    for (const p of llmcfg.getLlmProviders()) await llmcfg.deleteLlmProvider(p.id);
+  }
+});
+
+test('generateAndSaveImage：画面比例映射为标准 size（横/竖/方），缺省不传 size', async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const h = await startServer((req, res, body) => {
+    if (req.method === 'POST' && req.url === '/v1/images/generations') {
+      bodies.push(body as Record<string, unknown>);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }));
+    } else { res.writeHead(404); res.end('{}'); }
+  });
+  try {
+    await llmcfg.saveLlmProvider({ id: 'ig', name: '生图中转', kind: 'openai_compat', apiKey: 'sk-imagegen-key', baseUrl: `http://127.0.0.1:${h.port}/v1`, models: ['img-model'] });
+    await assignImageGen('ig', 'img-model');
+    const id = '11111111-2222-3333-4444-555555555555';
+    await generateAndSaveImage('p1', id, '16:9');
+    await generateAndSaveImage('p2', id, '9:16');
+    await generateAndSaveImage('p3', id, '1:1');
+    await generateAndSaveImage('p4', id, '垃圾格式');
+    await generateAndSaveImage('p5', id);
+    assert.deepEqual(bodies.map((b) => b.size), ['1536x1024', '1024x1536', '1024x1024', undefined, undefined]);
+  } finally {
+    h.server.close();
+    await assignImageGen(null);
+    for (const p of llmcfg.getLlmProviders()) await llmcfg.deleteLlmProvider(p.id);
+    await pruneOrphanImages([]);
+  }
+});
+
 test('generateImage：url 响应下载字节并按魔数识别格式', async () => {
   const h = await startServer((req, res, _body, hh) => {
     if (req.method === 'POST' && req.url === '/v1/images/generations') {

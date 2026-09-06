@@ -3,6 +3,7 @@
  *  总览 / 灵感 / 生成设置 / LLM 配置 / 采集源 /（admin）账号与权限。
  *  全部控件自绘（txtbox/stepper/switch/select/seg），无原生控件外观；所有动态注入经 esc() 转义。 */
 import type { PublicUser } from './types.js';
+import { DEFAULT_STYLES } from './store.js';
 import { uiCss, utilClientJs } from './ui.js';
 
 function authStyle(): string {
@@ -279,7 +280,7 @@ body{overflow:hidden}
       <section class="sec" id="sec-gen">
         ${!can ? '<div class="ro-banner">🔒 只读模式：您是 viewer 角色，设置修改仅管理员可用</div>' : ''}
         <div class="box ${can ? '' : 'locked'}">
-          <div class="sec-h"><h2>主题库与自动生成</h2><span class="pw">保存后即时生效并重排定时任务</span></div>
+          <div class="sec-h"><h2>主题 · 风格库与自动生成</h2><span class="pw">风格注入图像与视频参考画面提示词 · 保存后即时生效并重排定时任务</span></div>
           <div class="row">
             <div class="field">
               <label class="f">主题库（每次生成随机取一个）</label>
@@ -287,6 +288,14 @@ body{overflow:hidden}
               <div class="txtbox tnew" id="themeNew" contenteditable="true" role="textbox" data-placeholder="输入新主题，回车添加…" aria-label="新主题"></div>
               <div class="cb-hint" id="themeHint">点击 ○ 勾选参与随机 · 点击主题名改名 · ✕ 删除 · 回车添加</div>
             </div>
+            <div class="field">
+              <label class="f">风格库（每次生成随机取一个）</label>
+              <div class="themes" id="styleList" role="list" aria-label="风格列表"></div>
+              <div class="txtbox tnew" id="styleNew" contenteditable="true" role="textbox" data-placeholder="输入新风格，回车添加…" aria-label="新风格"></div>
+              <div class="cb-hint" id="styleHint">点击 ○ 勾选参与随机 · 可全部取消 = 不指定风格 · 点击风格名改名 · ✕ 删除 · 回车添加</div>
+            </div>
+          </div>
+          <div class="row">
             <div class="field" style="flex:0 0 148px">
               <label class="f">间隔（分钟）</label>
               <div class="stepper" id="intervalStepper">
@@ -891,13 +900,13 @@ function renderInspRows(){
   const list=filteredInsp();
   const el=$('#inspWrap');
   if(!list.length){el.innerHTML='<div class="empty" style="padding:30px">没有符合条件的记录</div>';return;}
-  el.innerHTML='<table class="tbl"><thead><tr><th>时间</th><th>类型</th><th>来源</th><th>主题</th><th>点子</th><th>状态</th><th class="act">操作</th></tr></thead><tbody>'+
+  el.innerHTML='<table class="tbl"><thead><tr><th>时间</th><th>类型</th><th>来源</th><th>主题 / 风格</th><th>点子</th><th>状态</th><th class="act">操作</th></tr></thead><tbody>'+
   list.map(i=>
     '<tr data-id="'+esc(i.id)+'">'+
     '<td class="num">'+fmt(i.createdAt)+'</td>'+
     '<td>'+esc(KIND[i.kind]?KIND[i.kind].n:i.kind)+'</td>'+
     '<td>'+esc(SRC[i.source]||i.source)+'</td>'+
-    '<td><span class="tag acc">'+esc(i.theme||'')+'</span></td>'+
+    '<td><span class="tag acc">'+esc(i.theme||'')+'</span>'+(i.style?'<span class="tag">'+esc(i.style)+'</span>':'')+'</td>'+
     '<td class="tt" title="'+esc(i.idea||'')+'">'+esc(i.title||i.idea||'—')+'</td>'+
     '<td><span class="st-dot '+esc(i.status)+'"><i></i>'+esc(ST[i.status]||i.status)+'</span></td>'+
     '<td class="act"><button class="btn sm ghost" data-a="view">查看</button>'+
@@ -952,6 +961,8 @@ function openDetail(item){
   curDetail=item;
   $('#dtitle').textContent=(KIND[item.kind]?KIND[item.kind].n:item.kind)+'灵感 · '+fmt(item.createdAt);
   const meta=['<span class="tag acc">'+esc(item.theme||'')+'</span>',
+    (item.style?'<span class="tag">'+esc(item.style)+'</span>':''),
+    (item.aspect?'<span class="tag">'+esc(item.aspect)+'</span>':''),
     '<span class="tag">'+esc(SRC[item.source]||item.source)+'</span>',
     '<span class="tag">'+esc(ST[item.status]||item.status)+'</span>'].join('');
   $('#dmeta').innerHTML=meta;
@@ -996,94 +1007,109 @@ dpm.addEventListener('mouseout',e=>{const r=e.target.closest&&e.target.closest('
   if(r){const rt=e.relatedTarget;if(!(rt&&rt.closest&&(rt.closest('.pcref')===r||rt.closest('.ptip'))))hideTip();}});
 window.addEventListener('scroll',hideTip,true);
 
-/* ===== 生成设置（主题库 + 间隔 + 开关 + 类型/来源） ===== */
+/* ===== 生成设置（主题/风格库 + 间隔 + 开关 + 类型/来源） ===== */
 let enabled=true;
+/* 标签编辑器工厂：○/● 勾选参与随机、contenteditable 改名、✕ 删除、回车添加（大小写不敏感去重）。
+ * minActive=激活子集下限：主题 1（至少 1 个参与随机）；风格 0（允许全部取消 = 本次生成不注入风格行）。 */
+function makeTagEditor(cfg){
+  const list=cfg.list,hintEl=cfg.hint;
+  let items=[],active=[];
+  const isActive=v=>active.some(x=>x.toLowerCase()===v.toLowerCase());
+  function flash(msg){hintEl.textContent=msg;setTimeout(()=>{hintEl.textContent=cfg.hintBase;},1800);}
+  function render(){
+    list.innerHTML=items.map((t,i)=>
+      '<span class="tchip'+(isActive(t)?' on':'')+'" data-i="'+i+'" role="listitem">'+
+      '<span class="tdot" role="checkbox" aria-checked="'+(isActive(t)?'true':'false')+'" tabindex="0" aria-label="勾选参与随机：'+esc(t)+'">'+(isActive(t)?'●':'○')+'</span>'+
+      '<span class="tname">'+esc(t)+'</span>'+
+      '<button class="tdel" type="button" aria-label="删除'+cfg.noun+' '+esc(t)+'"'+(items.length<2?' disabled':'')+'">✕</button></span>'
+    ).join('');
+  }
+  function commitEdit(nm,orig){
+    nm.removeAttribute('contenteditable');
+    const v=nm.textContent.replace(/\\u00A0/g,' ').trim().slice(0,100);
+    if(!v||(v.toLowerCase()!==orig.toLowerCase()&&items.some(t=>t.toLowerCase()===v.toLowerCase()))){nm.textContent=orig;return;}
+    const i=+nm.parentElement.dataset.i;
+    if(!Number.isFinite(i)||items[i]===undefined)return;
+    const wasActive=isActive(items[i]);
+    items[i]=v;render();
+    if(wasActive){
+      const ai=active.findIndex(x=>x.toLowerCase()===orig.toLowerCase());
+      if(ai>-1)active[ai]=v;
+    }
+  }
+  list.addEventListener('click',e=>{
+    const dot=e.target.closest('.tdot');
+    if(dot){
+      const i=+dot.closest('.tchip').dataset.i;
+      if(!Number.isFinite(i)||items[i]===undefined)return;
+      const v=items[i];
+      if(isActive(v)){
+        if(active.length<=cfg.minActive){flash('至少需要 '+cfg.minActive+' 个参与随机的'+cfg.noun);return;}
+        active=active.filter(x=>x.toLowerCase()!==v.toLowerCase());
+      }else{
+        active.push(v);
+      }
+      render();
+      return;
+    }
+    const del=e.target.closest('.tdel');
+    if(del&&!del.disabled){
+      const i=+del.closest('.tchip').dataset.i;
+      if(items.length>1){
+        const v=items[i];
+        items.splice(i,1);
+        active=active.filter(x=>x.toLowerCase()!==v.toLowerCase());
+        if(cfg.minActive>0&&!active.length)active=[...items];
+        render();
+      }
+      return;
+    }
+    const nm=e.target.closest('.tname');
+    if(nm&&!nm.isContentEditable){
+      nm.dataset.orig=nm.textContent;
+      nm.setAttribute('contenteditable','true');nm.focus();
+      const r=document.createRange();r.selectNodeContents(nm);
+      const sel=getSelection();sel.removeAllRanges();sel.addRange(r);
+    }
+  });
+  list.addEventListener('keydown',e=>{
+    const nm=e.target.closest('.tname');
+    if(nm&&nm.isContentEditable){
+      if(e.key==='Enter'){e.preventDefault();nm.blur();}
+      else if(e.key==='Escape'){nm.textContent=nm.dataset.orig??'';nm.removeAttribute('contenteditable');}
+      return;
+    }
+    const dot=e.target.closest('.tdot');
+    if(dot&&(e.key===' '||e.key==='Enter')){e.preventDefault();dot.click();}
+  });
+  list.addEventListener('blur',e=>{
+    const nm=e.target.closest('.tname');
+    if(!nm)return;
+    commitEdit(nm,nm.dataset.orig??'');
+  },{capture:true});
+  function add(){
+    const v=cfg.input.get();
+    if(!v)return;
+    if(items.some(t=>t.toLowerCase()===v.toLowerCase())){flash(cfg.noun+'已存在：'+v);cfg.input.set('');return;}
+    items.push(v.slice(0,40));
+    // 新条目默认激活；但风格库在「全部取消（不指定风格）」状态下添加时不自动激活，保持用户选择
+    if(cfg.minActive>0||active.length)active.push(v.slice(0,40));
+    else flash('已加入风格库，点击 ○ 勾选参与随机');
+    cfg.input.set('');render();
+  }
+  cfg.input.el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();add();}});
+  return {
+    get items(){return items.slice();},
+    get active(){return active.slice();},
+    set(it,ac){items=it.slice();active=ac.slice();render();},
+  };
+}
 const themeNew=makeTextField($('#themeNew'),{placeholder:'输入新主题，回车添加…',maxlength:40});
-const themeHint=$('#themeHint');
+const styleNew=makeTextField($('#styleNew'),{placeholder:'输入新风格，回车添加…',maxlength:40});
 const THEME_HINT='点击 ○ 勾选参与随机 · 点击主题名改名 · ✕ 删除 · 回车添加';
-let themes=[],activeThemes=[];
-function flashThemeHint(msg){themeHint.textContent=msg;setTimeout(()=>{themeHint.textContent=THEME_HINT;},1800);}
-function themeActive(t){return activeThemes.some(x=>x.toLowerCase()===t.toLowerCase());}
-function renderThemes(){
-  $('#themeList').innerHTML=themes.map((t,i)=>
-    '<span class="tchip'+(themeActive(t)?' on':'')+'" data-i="'+i+'" role="listitem">'+
-    '<span class="tdot" role="checkbox" aria-checked="'+(themeActive(t)?'true':'false')+'" tabindex="0" aria-label="勾选参与随机：'+esc(t)+'">'+(themeActive(t)?'●':'○')+'</span>'+
-    '<span class="tname">'+esc(t)+'</span>'+
-    '<button class="tdel" type="button" aria-label="删除主题 '+esc(t)+'"'+(themes.length<2?' disabled':'')+'>✕</button></span>'
-  ).join('');
-}
-function commitThemeEdit(nm,orig){
-  nm.removeAttribute('contenteditable');
-  const v=nm.textContent.replace(/\\u00A0/g,' ').trim().slice(0,100);
-  if(!v||(v.toLowerCase()!==orig.toLowerCase()&&themes.some(t=>t.toLowerCase()===v.toLowerCase()))){nm.textContent=orig;return;}
-  const i=+nm.parentElement.dataset.i;
-  if(!Number.isFinite(i)||themes[i]===undefined)return;
-  const wasActive=themeActive(themes[i]);
-  themes[i]=v;renderThemes();
-  if(wasActive){
-    const ai=activeThemes.findIndex(x=>x.toLowerCase()===orig.toLowerCase());
-    if(ai>-1)activeThemes[ai]=v;
-  }
-}
-$('#themeList').addEventListener('click',e=>{
-  const dot=e.target.closest('.tdot');
-  if(dot){
-    const i=+dot.closest('.tchip').dataset.i;
-    if(!Number.isFinite(i)||themes[i]===undefined)return;
-    const v=themes[i];
-    if(themeActive(v)){
-      if(activeThemes.length<2){flashThemeHint('至少需要 1 个参与随机的主题');return;}
-      activeThemes=activeThemes.filter(x=>x.toLowerCase()!==v.toLowerCase());
-    }else{
-      activeThemes.push(v);
-    }
-    renderThemes();
-    return;
-  }
-  const del=e.target.closest('.tdel');
-  if(del&&!del.disabled){
-    const i=+del.closest('.tchip').dataset.i;
-    if(themes.length>1){
-      const v=themes[i];
-      themes.splice(i,1);
-      activeThemes=activeThemes.filter(x=>x.toLowerCase()!==v.toLowerCase());
-      if(!activeThemes.length)activeThemes=[...themes];
-      renderThemes();
-    }
-    return;
-  }
-  const nm=e.target.closest('.tname');
-  if(nm&&!nm.isContentEditable){
-    nm.dataset.orig=nm.textContent;
-    nm.setAttribute('contenteditable','true');nm.focus();
-    const r=document.createRange();r.selectNodeContents(nm);
-    const sel=getSelection();sel.removeAllRanges();sel.addRange(r);
-  }
-});
-$('#themeList').addEventListener('keydown',e=>{
-  const nm=e.target.closest('.tname');
-  if(nm&&nm.isContentEditable){
-    if(e.key==='Enter'){e.preventDefault();nm.blur();}
-    else if(e.key==='Escape'){nm.textContent=nm.dataset.orig??'';nm.removeAttribute('contenteditable');}
-    return;
-  }
-  const dot=e.target.closest('.tdot');
-  if(dot&&(e.key===' '||e.key==='Enter')){e.preventDefault();dot.click();}
-});
-$('#themeList').addEventListener('blur',e=>{
-  const nm=e.target.closest('.tname');
-  if(!nm)return;
-  commitThemeEdit(nm,nm.dataset.orig??'');
-},{capture:true});
-function addTheme(){
-  const v=themeNew.get();
-  if(!v)return;
-  if(themes.some(t=>t.toLowerCase()===v.toLowerCase())){flashThemeHint('主题已存在：'+v);themeNew.set('');return;}
-  themes.push(v.slice(0,40));
-  activeThemes.push(v.slice(0,40));
-  themeNew.set('');renderThemes();
-}
-themeNew.el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addTheme();}});
+const STYLE_HINT='点击 ○ 勾选参与随机 · 可全部取消 = 不指定风格 · 点击风格名改名 · ✕ 删除 · 回车添加';
+const themeEd=makeTagEditor({list:$('#themeList'),input:themeNew,hint:$('#themeHint'),hintBase:THEME_HINT,noun:'主题',minActive:1});
+const styleEd=makeTagEditor({list:$('#styleList'),input:styleNew,hint:$('#styleHint'),hintBase:STYLE_HINT,noun:'风格',minActive:0});
 
 const intervalStepper=makeStepper($('#intervalStepper'));
 const enabledSw=makeSwitch($('#enabledSw'));
@@ -1103,24 +1129,26 @@ function arrEq(a,b){if(a.length!==b.length)return false;for(let i=0;i<a.length;i
 function setEq(a,b){if(a.length!==b.length)return false;
   const n=x=>JSON.stringify(x.map(v=>String(v).toLowerCase()).sort());
   return n(a)===n(b);}
-function captureGenBase(){genBase={interval:intervalStepper.get(),enabled:enabledSw.get(),themes:themes.slice(),active:activeThemes.slice(),kinds:kinds.slice(),sources:sources.slice()};}
+function captureGenBase(){genBase={interval:intervalStepper.get(),enabled:enabledSw.get(),themes:themeEd.items,activeThemes:themeEd.active,styles:styleEd.items,activeStyles:styleEd.active,kinds:kinds.slice(),sources:sources.slice()};}
 function genDirty(){
   if(!genBase)return false;
   return genBase.interval!==intervalStepper.get()||genBase.enabled!==enabledSw.get()||
-    !arrEq(genBase.themes,themes)||!setEq(genBase.active,activeThemes)||
+    !arrEq(genBase.themes,themeEd.items)||!setEq(genBase.activeThemes,themeEd.active)||
+    !arrEq(genBase.styles,styleEd.items)||!setEq(genBase.activeStyles,styleEd.active)||
     !setEq(genBase.kinds,kinds)||!setEq(genBase.sources,sources);
 }
 function applyGenBase(){
   if(!genBase)return;
   intervalStepper.set(genBase.interval);enabledSw.set(genBase.enabled);
-  themes=genBase.themes.slice();activeThemes=genBase.active.slice();
+  themeEd.set(genBase.themes,genBase.activeThemes);
+  styleEd.set(genBase.styles,genBase.activeStyles);
   kinds=genBase.kinds.slice();sources=genBase.sources.slice();
-  renderKindsChips();renderThemes();
+  renderKindsChips();
 }
 async function saveGenAsk(){
   try{
     await jf('/api/settings',{method:'PUT',headers:{'content-type':'application/json'},
-      body:JSON.stringify({intervalMinutes:intervalStepper.get(),enabled:enabledSw.get(),themes,activeThemes,kinds,sources})});
+      body:JSON.stringify({intervalMinutes:intervalStepper.get(),enabled:enabledSw.get(),themes:themeEd.items,activeThemes:themeEd.active,styles:styleEd.items,activeStyles:styleEd.active,kinds,sources})});
     toast('已保存设置');
     captureGenBase();refreshAsk();
     return true;
@@ -1129,12 +1157,17 @@ async function saveGenAsk(){
 async function loadSettings(){
   try{
     const s=await jf('/api/settings');
-    themes=s.themes&&s.themes.length?s.themes.slice():['general'];
-    activeThemes=(s.activeThemes&&s.activeThemes.length)?s.activeThemes.filter(t=>themes.includes(t)):[...themes];
-    if(!activeThemes.length)activeThemes=[...themes];
+    const th=s.themes&&s.themes.length?s.themes.slice():['general'];
+    let thA=(s.activeThemes&&s.activeThemes.length)?s.activeThemes.filter(t=>th.includes(t)):[...th];
+    if(!thA.length)thA=[...th];
+    themeEd.set(th,thA);
+    const st=(s.styles&&s.styles.length)?s.styles.slice():${JSON.stringify(DEFAULT_STYLES)};
+    // activeStyles 字段缺失（旧版数据）→ 全激活；显式空数组 → 保持空（= 不指定风格）
+    const stA=Array.isArray(s.activeStyles)?s.activeStyles.filter(t=>st.includes(t)):[...st];
+    styleEd.set(st,stA);
     intervalStepper.set(s.intervalMinutes);enabledSw.set(s.enabled);
     kinds=s.kinds.slice();sources=s.sources.slice();
-    renderKindsChips();renderThemes();
+    renderKindsChips();
     captureGenBase();refreshAsk();
   }catch(e){}
 }

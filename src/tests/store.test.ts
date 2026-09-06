@@ -8,7 +8,7 @@ const dir = await mkdtemp(join(tmpdir(), 'inspira-store-'));
 process.env.DATA_DIR = dir;
 
 const { store, initStore } = await import('../store.js');
-const settings = { intervalMinutes: 15, enabled: false, themes: ['nature', 'general'], activeThemes: ['nature'], kinds: ['video'] as const, sources: ['original_idea'] as const };
+const settings = { intervalMinutes: 15, enabled: false, themes: ['nature', 'general'], activeThemes: ['nature'], styles: ['anime', 'noir'], activeStyles: ['noir'], kinds: ['video'] as const, sources: ['original_idea'] as const };
 
 async function fresh(): Promise<typeof import('../store.js')> {
   return import(`../store.js?reload=${Date.now()}-${Math.random()}`) as Promise<typeof import('../store.js')>;
@@ -16,7 +16,7 @@ async function fresh(): Promise<typeof import('../store.js')> {
 
 test('保存并重载 settings', async () => {
   await initStore();
-  await store.setSettings({ ...settings, themes: [...settings.themes], activeThemes: [...settings.activeThemes], kinds: [...settings.kinds] as any, sources: [...settings.sources] as any });
+  await store.setSettings({ ...settings, themes: [...settings.themes], activeThemes: [...settings.activeThemes], styles: [...settings.styles], activeStyles: [...settings.activeStyles], kinds: [...settings.kinds] as any, sources: [...settings.sources] as any });
   const reloaded = await fresh();
   await reloaded.initStore();
   const got = reloaded.store.getSettings();
@@ -24,6 +24,8 @@ test('保存并重载 settings', async () => {
   assert.equal(got.enabled, false);
   assert.deepEqual(got.themes, ['nature', 'general']);
   assert.deepEqual(got.activeThemes, ['nature']);
+  assert.deepEqual(got.styles, ['anime', 'noir']);
+  assert.deepEqual(got.activeStyles, ['noir']);
   assert.deepEqual(got.kinds, ['video']);
   assert.deepEqual(got.sources, ['original_idea']);
 });
@@ -68,6 +70,49 @@ test('activeThemes 只保留主题库内成员（未知主题被过滤）', asyn
     const s = await fresh();
     await s.initStore();
     assert.deepEqual(s.store.getSettings().activeThemes, ['b']);
+  } finally {
+    process.env.DATA_DIR = dir;
+  }
+});
+
+test('styles 缺失的旧 settings.json 迁移为默认风格库且全激活', async () => {
+  const dir2 = await mkdtemp(join(tmpdir(), 'inspira-store-sty-'));
+  await writeFile(join(dir2, 'settings.json'), JSON.stringify({ intervalMinutes: 30, enabled: false, themes: ['a'], activeThemes: ['a'], kinds: ['video'], sources: ['original_idea'] }));
+  process.env.DATA_DIR = dir2;
+  try {
+    const s = await fresh();
+    await s.initStore();
+    const got = s.store.getSettings();
+    assert.ok(got.styles.length >= 1, '风格库回退到默认库');
+    assert.deepEqual(got.activeStyles, got.styles, '字段缺失时默认全激活');
+  } finally {
+    process.env.DATA_DIR = dir;
+  }
+});
+
+test('activeStyles 显式空数组保留为空（= 不注入风格行）', async () => {
+  const dir2 = await mkdtemp(join(tmpdir(), 'inspira-store-sty2-'));
+  await writeFile(join(dir2, 'settings.json'), JSON.stringify({ intervalMinutes: 30, enabled: false, themes: ['a'], activeThemes: ['a'], styles: ['anime', 'noir'], activeStyles: [], kinds: ['video'], sources: ['original_idea'] }));
+  process.env.DATA_DIR = dir2;
+  try {
+    const s = await fresh();
+    await s.initStore();
+    const got = s.store.getSettings();
+    assert.deepEqual(got.styles, ['anime', 'noir']);
+    assert.deepEqual(got.activeStyles, [], '显式空激活集是合法状态，不得回填');
+  } finally {
+    process.env.DATA_DIR = dir;
+  }
+});
+
+test('activeStyles 只保留风格库内成员（未知风格被过滤）', async () => {
+  const dir2 = await mkdtemp(join(tmpdir(), 'inspira-store-sty3-'));
+  await writeFile(join(dir2, 'settings.json'), JSON.stringify({ intervalMinutes: 30, enabled: false, themes: ['a'], activeThemes: ['a'], styles: ['anime', 'noir'], activeStyles: ['noir', 'ghost'], kinds: ['video'], sources: ['original_idea'] }));
+  process.env.DATA_DIR = dir2;
+  try {
+    const s = await fresh();
+    await s.initStore();
+    assert.deepEqual(s.store.getSettings().activeStyles, ['noir']);
   } finally {
     process.env.DATA_DIR = dir;
   }

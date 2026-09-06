@@ -8,21 +8,21 @@ import type { Inspiration, InspirationCover, InspirationKind, InspirationSetting
 
 export interface GeneratorDeps {
   idea(material: SourceMaterial, theme: string): Promise<string>;
-  prompt(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial): Promise<string>;
+  prompt(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial, style?: string, aspect?: string): Promise<string>;
   /** 为视频提示词中的 <Picture N> 参考画面生成配套英文生图提示词 */
-  picture(description: string, theme: string, idea: string): Promise<string>;
+  picture(description: string, theme: string, idea: string, style?: string): Promise<string>;
   /** 「生图」：为图像类灵感的最终提示词产出封面图（未提供或未分配生图模型时跳过） */
-  imagegen?(prompt: string, id: string): Promise<{ file: string; model: string }>;
+  imagegen?(prompt: string, id: string, aspect?: string): Promise<{ file: string; model: string }>;
   material(source: InspirationSource, theme: string): Promise<SourceMaterial>;
 }
 
 export const defaultDeps: GeneratorDeps = {
   // 任务路由：点子 → idea；图像提示词与视频参考画面生图提示词 → image；视频提示词 → video
   idea: (material, theme) => chatCompletion(buildIdeaPrompt(theme, material), { task: 'idea' }),
-  prompt: (kind, theme, idea, material) =>
-    chatCompletion(buildPromptPrompt(kind, theme, idea, material), { task: kind === 'video' ? 'video' : 'image' }),
-  picture: (description, theme, idea) => chatCompletion(buildPicturePrompt(description, theme, idea), { task: 'image' }),
-  imagegen: (prompt, id) => generateAndSaveImage(prompt, id),
+  prompt: (kind, theme, idea, material, style, aspect) =>
+    chatCompletion(buildPromptPrompt(kind, theme, idea, material, style, aspect), { task: kind === 'video' ? 'video' : 'image' }),
+  picture: (description, theme, idea, style) => chatCompletion(buildPicturePrompt(description, theme, idea, style), { task: 'image' }),
+  imagegen: (prompt, id, aspect) => generateAndSaveImage(prompt, id, aspect),
   material: (source, theme) => resolveSourceMaterial(source, theme),
 };
 
@@ -32,12 +32,19 @@ export function stripCodeFences(text: string): string {
   return (m ? m[1]! : t).trim();
 }
 
+/** 图像灵感的随机画面比例池（视频固定 16:9，由 mmh3 规范决定，不参与抽取） */
+export const IMAGE_ASPECTS = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'];
+
 export interface InspirationSeed {
   id: string;
   kind: InspirationKind;
   source: InspirationSource;
   /** 本次生成选中的主题（从设置的主题库中随机取一个） */
   theme: string;
+  /** 本次生成选中的画面风格（从风格库激活子集随机取一个；未勾选任何风格时缺省 = 不注入风格） */
+  style?: string;
+  /** 本次生成选中的画面比例（仅图像灵感从 IMAGE_ASPECTS 随机取，提示词与封面生图共用） */
+  aspect?: string;
   createdAt: string;
 }
 
@@ -49,11 +56,16 @@ export function createSeed(settings: InspirationSettings): InspirationSeed {
   const sources = settings.sources;
   // 只从「已勾选激活」的主题子集中随机取；防御性回退到全库
   const themes = settings.activeThemes?.length ? settings.activeThemes : settings.themes;
+  // 风格只从激活子集随机取；空集是合法状态（不注入风格行），不回退全库
+  const styles = settings.activeStyles?.length ? settings.activeStyles : [];
+  const kind = kinds[kindCursor++ % kinds.length]!;
   return {
     id: randomUUID(),
-    kind: kinds[kindCursor++ % kinds.length]!,
+    kind,
     source: sources[Math.floor(Math.random() * sources.length)]!,
     theme: themes[Math.floor(Math.random() * themes.length)]!,
+    style: styles.length ? styles[Math.floor(Math.random() * styles.length)] : undefined,
+    aspect: kind === 'image' ? IMAGE_ASPECTS[Math.floor(Math.random() * IMAGE_ASPECTS.length)]! : undefined,
     createdAt: new Date().toISOString(),
   };
 }
@@ -86,13 +98,15 @@ export async function generateInspiration(settings: InspirationSettings, seed: I
     kind: seed.kind,
     source: seed.source,
     theme: seed.theme,
+    style: seed.style,
+    aspect: seed.aspect,
     createdAt: seed.createdAt,
   };
   try {
     const material = await deps.material(seed.source, seed.theme);
     // 点子步骤产出「标题（10~15 字，展示用）+ 点子正文（喂给提示词生成）」；解析失败时 title 缺省
     const { title, idea } = splitIdeaOutput(stripCodeFences((await deps.idea(material, seed.theme)).trim()));
-    const prompt = stripCodeFences(await deps.prompt(seed.kind, seed.theme, idea, material));
+    const prompt = stripCodeFences(await deps.prompt(seed.kind, seed.theme, idea, material, seed.style, seed.aspect));
     // 视频提示词保留 <Picture N> 引用，并为每个引用生成配套英文生图提示词；
     // 单个参考画面的提示词生成失败不影响整条灵感（该画面 imagePrompt 留空）
     let pictures: PictureRef[] | undefined;
@@ -101,7 +115,7 @@ export async function generateInspiration(settings: InspirationSettings, seed: I
       if (refs.length) {
         pictures = await Promise.all(refs.map(async (r) => {
           try {
-            const imagePrompt = stripCodeFences((await deps.picture(r.description, seed.theme, idea)).trim());
+            const imagePrompt = stripCodeFences((await deps.picture(r.description, seed.theme, idea, seed.style)).trim());
             return { index: r.index, description: r.description, imagePrompt };
           } catch (err) {
             console.error('[inspira] 参考画面生图提示词生成失败', { id: seed.id, index: r.index, error: describeError(err) });
@@ -115,7 +129,7 @@ export async function generateInspiration(settings: InspirationSettings, seed: I
     let coverError: string | undefined;
     if (seed.kind === 'image' && deps.imagegen) {
       try {
-        const r = await deps.imagegen(prompt, seed.id);
+        const r = await deps.imagegen(prompt, seed.id, seed.aspect);
         cover = { file: r.file, model: r.model };
       } catch (err) {
         if (!(err instanceof ImageGenNotConfiguredError)) {

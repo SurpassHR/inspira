@@ -5,10 +5,15 @@ export const settingsSchema = z.object({
   enabled: z.boolean(),
   themes: z.array(z.string().trim().min(1).max(100)).min(1),
   activeThemes: z.array(z.string().trim().min(1).max(100)).min(1),
+  styles: z.array(z.string().trim().min(1).max(100)).min(1),
+  // 允许空数组 = 全部取消勾选，生成时不注入风格行
+  activeStyles: z.array(z.string().trim().min(1).max(100)),
   kinds: z.array(z.enum(['image', 'video'])).min(1),
   sources: z.array(z.enum(['hot_topic', 'hot_image', 'original_idea'])).min(1),
 }).strict().refine((s) => s.activeThemes.every((t) => s.themes.includes(t)), {
   message: 'activeThemes 必须是 themes 的子集',
+}).refine((s) => s.activeStyles.every((t) => s.styles.includes(t)), {
+  message: 'activeStyles 必须是 styles 的子集',
 });
 
 export type SettingsInput = z.infer<typeof settingsSchema>;

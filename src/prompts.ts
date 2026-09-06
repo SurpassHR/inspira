@@ -118,11 +118,26 @@ export function splitIdeaOutput(raw: string): { title: string; idea: string } {
   return { title, idea: idea || title };
 }
 
-export function buildPromptPrompt(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial): ChatMessage[] {
+/** 从 W:H 比例推导构图方向文案（非法格式返回 undefined） */
+function aspectOrientation(aspect: string): string | undefined {
+  const m = /^([0-9]+):([0-9]+)$/.exec(aspect.trim());
+  if (!m) return undefined;
+  const w = Number(m[1]!), h = Number(m[2]!);
+  if (!w || !h) return undefined;
+  return w > h ? '横构图' : w < h ? '竖构图' : '方构图';
+}
+
+export function buildPromptPrompt(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial, style?: string, aspect?: string): ChatMessage[] {
   const materialLinesText = [
     material.source !== 'original_idea' && material.url ? `素材来源：${material.url}` : null,
     material.imageUrl ? `图像地址：${material.imageUrl}` : null,
   ].filter((l): l is string => l !== null).join('\n');
+  // 画面风格与比例仅注入图像分支（视频正文保持 mmh3 规范不动）；为空 = 不注入对应行
+  const styleLine = style ? `画面风格：${style}\n` : '';
+  const styleNote = style ? '整段提示词需统一体现上述画面风格。' : '';
+  const orient = aspect ? aspectOrientation(aspect) : undefined;
+  const aspectLine = orient ? `画面比例：${aspect}\n` : '';
+  const aspectNote = orient ? `整段提示词的构图与取景需严格按「${aspect}」（${orient}）设计。` : '';
 
   const user = kind === 'video'
     ? `主题：${theme}
@@ -135,20 +150,21 @@ ${materialLinesText}
 系统随后会自动为每个 <Picture N> 生成配套的英文生图提示词。没有锚点就不要使用；<Picture N> 只是命名锚点，不要提及外部提供的参考图。
 只输出 copy-ready 的提示词块本身，不要任何解释或额外文字。`
     : `主题：${theme}
-创意点子：${idea}
+${styleLine}${aspectLine}创意点子：${idea}
 ${materialLinesText}
 
-请直接输出最终英文文生图提示词段落本身（单一连贯段落，约 300–500 词）。只输出该段落，不要中文解释、不要前后缀。`;
+请直接输出最终英文文生图提示词段落本身（单一连贯段落，约 300–500 词）。${styleNote}${aspectNote}只输出该段落，不要中文解释、不要前后缀。`;
 
   return [{ role: 'system', content: systemPrompts[kind] }, { role: 'user', content: user }];
 }
 
 /** 为视频提示词中的某个 <Picture N> 参考画面生成配套英文生图提示词（krea2 规范） */
-export function buildPicturePrompt(description: string, theme: string, idea: string): ChatMessage[] {
+export function buildPicturePrompt(description: string, theme: string, idea: string, style?: string): ChatMessage[] {
+  const styleLine = style ? `\n画面风格：${style}` : '';
   const user = `这个画面是视频中的关键帧（<Picture N> 参考画面），需要一张配套参考图：
 ${description}
 
-所属主题：${theme}
+所属主题：${theme}${styleLine}
 所属创意点子：${idea}
 
 请为这个画面输出一段可直接投喂文生图模型的英文提示词（单一连贯段落，约 200–400 词，遵循 krea2 规范：构图、光线、色彩、镜头语言、风格、画质词齐全；与视频提示词中该画面的描述保持一致，但作为独立静态图可适当强化画面细节与统一风格）。只输出该段落，不要解释、不要任何前后缀。`;

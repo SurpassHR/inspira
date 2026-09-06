@@ -282,8 +282,10 @@ async function downloadImageBytes(url: string, timeoutMs: number, signal?: Abort
   }
 }
 
-async function imagesEndpointGenerate(target: LlmTarget, prompt: string, timeoutMs: number, signal?: AbortSignal): Promise<{ bytes: Buffer; ext: string }> {
-  const payload = { model: target.model, prompt, n: 1 };
+async function imagesEndpointGenerate(target: LlmTarget, prompt: string, timeoutMs: number, signal?: AbortSignal, size?: string): Promise<{ bytes: Buffer; ext: string }> {
+  const basePayload = { model: target.model, prompt, n: 1 };
+  // size（画面比例映射的标准 OpenAI 参数）可选；端点不认时去掉后按原参数再试
+  let payload: Record<string, unknown> = size ? { ...basePayload, size } : { ...basePayload };
   let lastError: unknown = new Error('未知生图错误');
   let fatal: Error | null = null; // 4xx/空数据等换路径才有效、重试无意义的错误，直接穿透重试循环
   for (const attempt of [1, 2]) {
@@ -301,6 +303,12 @@ async function imagesEndpointGenerate(target: LlmTarget, prompt: string, timeout
       if (!res.ok) {
         const detail = await readErrorBody(res, target.key);
         const err = imageHttpError(res.status, detail);
+        if ((res.status === 400 || res.status === 422) && 'size' in payload) {
+          // 部分中转对 size 严格校验：去掉 size 再试（比例仍由提示词文本约束）
+          payload = { ...basePayload };
+          lastError = err;
+          continue;
+        }
         if (res.status >= 500 || res.status === 429) {
           lastError = attempt === 1 ? new Error(`${err.message}，重试中…`) : err;
           if (attempt === 2) throw lastError;
@@ -407,7 +415,7 @@ async function chatImageGenerate(target: LlmTarget, prompt: string, timeoutMs: n
  *    部分中转把 gemini-*-image 类模型只绑定在对话端点；
  * 3. 两路都失败时合并两侧原因（含中转错误响应体摘要），密钥不进入任何错误消息。
  */
-export async function generateImage(prompt: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{ bytes: Buffer; ext: string; model: string }> {
+export async function generateImage(prompt: string, opts: { timeoutMs?: number; signal?: AbortSignal; size?: string } = {}): Promise<{ bytes: Buffer; ext: string; model: string }> {
   const target = resolveImageGenTarget();
   if (!target) throw new ImageGenNotConfiguredError();
   if (target.kind === 'anthropic') throw new Error('生图暂不支持 Anthropic 协议（无图像生成接口），请为「生图」分配 OpenAI / Gemini / OpenAI 兼容提供商');
@@ -415,7 +423,7 @@ export async function generateImage(prompt: string, opts: { timeoutMs?: number; 
 
   let primaryError: unknown;
   try {
-    const r = await imagesEndpointGenerate(target, prompt, timeoutMs, opts.signal);
+    const r = await imagesEndpointGenerate(target, prompt, timeoutMs, opts.signal, opts.size);
     return { ...r, model: target.model };
   } catch (err) {
     if (opts.signal?.aborted) throw err;

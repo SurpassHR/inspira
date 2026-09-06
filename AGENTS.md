@@ -15,6 +15,7 @@
 - **可选生图**：图像类灵感在「LLM 配置 → 模型分配」指定了「生图」（task=`imagegen`）模型时，提示词就绪后自动生图（`src/llm.ts` 的 `generateImage()`，超时 `LLM_IMAGE_TIMEOUT_MS` 默认 180s）：**优先 OpenAI 兼容 `POST {base}/images/generations`（b64_json/url 双解析），失败（除 401）自动降级 chat completions** 并从回复提取图片（message.images / data URI / markdown / 裸 URL）——部分中转把 `gemini-*-image` 绑定在对话端点、`gpt-image-*` 绑定在 images 端点，自适应覆盖两类；4xx/空数据不重试（fatal 穿透），两路都失败时合并原因并**透出中转错误响应体摘要**（剔除密钥、截断 240 字符）。产物封面图存 `DATA_DIR/images/{灵感id}.{ext}`、经 `GET /api/images/:name` 展示；生图严格按分配解析（**不回退**默认提供商/环境变量），未分配=静默不生图，失败只记 `coverError` 不影响 ready（`src/images.ts`）。
 - **不实现**：视频生成 API 调用、视频产物存储/回传。视频封面仍是占位区，等待接入 MiniMax H3。
 - 视频提示词**时长固定 6 秒**、默认 16:9、T2VA 直接生成（见下方提示词规约）。
+- **图像比例随机化**：图像灵感每次生成从固定池 `IMAGE_ASPECTS`（generator.ts：1:1 / 4:3 / 3:4 / 16:9 / 9:16 / 3:2 / 2:3）随机取一个，`InspirationSeed.aspect?` / `Inspiration.aspect?` 持久化（画廊卡片「文生图 · 比例」与后台详情标签展示）；`buildPromptPrompt()` 仅图像分支注入 `画面比例：W:H` 行 + 构图方向指令（横/竖/方构图，视频分支不注入）；封面生图经 `aspectToSize()`（`src/images.ts`）映射标准 size（横 1536x1024 / 竖 1024x1536 / 方 1024x1024）随 images 请求发送，端点 400/422 拒绝 size 时自动去参重试一次再走 chat 降级。
 
 ## 技术栈与运行
 
@@ -31,7 +32,8 @@
 
 - **所有 UI 组件（输入框 / 下拉框 / 调节框 / 开关 / 标签等）必须自行实现为自定义组件，保持界面风格统一。** 禁止直接使用浏览器原生控件外观：`<input type="number">` 的步进箭头、原生 `<select>`/`<datalist>` 下拉、原生 `<input type="checkbox">` 等一律不得出现。
 - 组件实现位置：共享设计体系（CSS tokens）与客户端工具 `esc`/`fmt`/`ago` 单一来源在 `src/ui.ts`（SSR 内联字符串，画廊与后台两页共用，防止 XSS 转义不一致）；交互组件以小型 JS 工厂函数封装（如 `makeTextField`、`makeStepper`、`makeSwitch`、`makeSelect`）写在各自页面的内联 <script> 里（后台 `src/admin.ts`；公开画廊 `src/dashboard.ts`），纯 vanilla JS，无第三方依赖：
-  - 主题库标签编辑器：chips 列表（前导 ○/● 勾选决定「参与随机抽取」，点击主题名内联改名为 contenteditable，Enter/blur 提交、Esc 还原，✕ 删除且至少保留 1 个），下方 contenteditable 输入框回车添加（新主题默认激活；大小写不敏感去重，重复时短暂提示）；数据模型为 `settings.themes: string[]`（全量库）+ `settings.activeThemes: string[]`（激活子集，schema 校验须为 themes 子集且 min 1；旧版单值 `theme` 迁移为 库=自定义+默认、激活=旧主题），`createSeed` 只从激活子集随机取一个作为本次主题；
+  - 主题库/风格库标签编辑器：同一工厂 `makeTagEditor(cfg)`（admin 内联脚本，cfg：列表/输入/提示元素、名词、minActive）实例化两份——chips 列表（前导 ○/● 勾选决定「参与随机抽取」，点击名称内联改名为 contenteditable，Enter/blur 提交、Esc 还原，✕ 删除且库内至少保留 1 个），下方 contenteditable 输入框回车添加（默认激活；大小写不敏感去重，重复时短暂提示）；数据模型为 `settings.themes: string[]` + `settings.styles: string[]`（全量库）与 `settings.activeThemes` / `settings.activeStyles`（激活子集，schema 校验须为对应库子集；activeThemes min 1，**activeStyles 可为空数组 = 不注入风格行**；旧版单值 `theme` 迁移为 库=自定义+默认、激活=旧主题；styles 缺失迁移为默认库全激活、字段缺失才全激活，显式空保留空），`createSeed` 各自从激活子集随机取一个（主题必得、风格空集时 `style: undefined` 不回退全库）；
+  - 风格注入点：`buildPromptPrompt()`（src/prompts.ts）**仅 image 分支**在「主题」与「创意点子」之间插 `画面风格：${style}` 行 + 尾部风格指令；`buildPicturePrompt()` 同样注入；视频提示词正文与 krea2/mmh3 system prompt 不动。封面生图直接用最终图像提示词，风格自动继承；条目持久化 `Inspiration.style?`（卡片/列表/详情展示为标签）；
   - 步进框（间隔）：`−`/`+` 按钮 + 纯数字文本输入（inputmode=numeric 过滤），带 min/max 钳制；
   - 开关（自动生成）：自绘轨道/滑块（role="switch"，支持空格/回车切换），不依赖 checkbox；
   - 标签胶囊 chips：选中态高亮。

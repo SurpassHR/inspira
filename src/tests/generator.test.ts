@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createSeed, extractPictureRefs, generateInspiration, stripCodeFences, type GeneratorDeps } from '../generator.js';
+import { createSeed, extractPictureRefs, generateInspiration, stripCodeFences, IMAGE_ASPECTS, type GeneratorDeps } from '../generator.js';
 import { ImageGenNotConfiguredError } from '../llm.js';
 import type { InspirationSettings, InspirationSource } from '../types.js';
 
 const settings: InspirationSettings = {
   intervalMinutes: 60, enabled: true, themes: ['自然', '科技'], activeThemes: ['自然'],
+  styles: ['anime', 'watercolor'], activeStyles: ['anime'],
   kinds: ['image', 'video'], sources: ['hot_topic', 'hot_image', 'original_idea'],
 };
-const seed = { id: 's1', kind: 'image' as const, source: 'original_idea' as const, theme: '自然', createdAt: '2026-01-01T00:00:00.000Z' };
+const seed = { id: 's1', kind: 'image' as const, source: 'original_idea' as const, theme: '自然', style: 'anime', aspect: '3:4', createdAt: '2026-01-01T00:00:00.000Z' };
 const defaultSettings: InspirationSettings = { ...settings, kinds: ['image'], sources: ['original_idea'] };
 
 const pictureDep = async (_desc: string) => 'The frame image prompt paragraph.';
@@ -33,6 +34,8 @@ test('成功路径：idea + prompt 来自 LLM，剥离代码围栏，状态 read
   assert.equal(item.title, undefined); // 无「标题：」行时回退为纯点子，不写 title
   assert.equal(item.prompt, 'The final English image prompt paragraph.');
   assert.equal(item.theme, '自然');
+  assert.equal(item.style, 'anime'); // 从激活风格子集随机取（此处只有一个）
+  assert.equal(item.aspect, '3:4'); // seed 携带的画面比例透传到条目
   assert.equal(item.id, 's1');
   assert.ok(item.updatedAt);
 });
@@ -53,6 +56,7 @@ test('idea 双行格式：解析出短标题 title，prompt 阶段仍接收完�
 test('createSeed 只从已激活主题子集随机取（未勾选的不参与）', () => {
   const s: InspirationSettings = {
     intervalMinutes: 60, enabled: true, themes: ['山水', '机甲'], activeThemes: ['山水'],
+    styles: ['anime'], activeStyles: ['anime'],
     kinds: ['image'], sources: ['original_idea'],
   };
   for (let n = 0; n < 20; n++) {
@@ -60,6 +64,40 @@ test('createSeed 只从已激活主题子集随机取（未勾选的不参与）
     assert.equal(sd.theme, '山水', `theme=${sd.theme} 必须在激活子集内（库内未激活的舰甲不得被抽中）`);
     assert.equal(sd.kind, 'image');
     assert.ok(sd.id && sd.createdAt);
+  }
+});
+
+test('createSeed 风格从激活子集随机取；全部取消时 style 为 undefined（不回退全库）', () => {
+  const base: InspirationSettings = {
+    intervalMinutes: 60, enabled: true, themes: ['a'], activeThemes: ['a'],
+    styles: ['anime', 'noir'], activeStyles: ['noir'],
+    kinds: ['image'], sources: ['original_idea'],
+  };
+  for (let n = 0; n < 20; n++) {
+    assert.equal(createSeed(base).style, 'noir', '库内未激活的风格不得被抽中');
+  }
+  const none: InspirationSettings = { ...base, activeStyles: [] };
+  for (let n = 0; n < 20; n++) {
+    assert.equal(createSeed(none).style, undefined, 'activeStyles 为空 = 不指定风格');
+  }
+});
+
+test('createSeed 画面比例：图像灵感随机取且在池内；视频灵感不抽比例（固定 16:9）', () => {
+  const img: InspirationSettings = {
+    intervalMinutes: 60, enabled: true, themes: ['a'], activeThemes: ['a'],
+    styles: [], activeStyles: [],
+    kinds: ['image'], sources: ['original_idea'],
+  };
+  const seen = new Set<string>();
+  for (let n = 0; n < 40; n++) {
+    const sd = createSeed(img);
+    assert.ok(sd.aspect && IMAGE_ASPECTS.includes(sd.aspect), `aspect=${sd.aspect} 必须在比例池内`);
+    seen.add(sd.aspect);
+  }
+  assert.ok(seen.size > 1, '随机比例应覆盖多个取值');
+  const vid: InspirationSettings = { ...img, kinds: ['video'] };
+  for (let n = 0; n < 10; n++) {
+    assert.equal(createSeed(vid).aspect, undefined, '视频固定 16:9，不抽比例');
   }
 });
 

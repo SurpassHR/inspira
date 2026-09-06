@@ -206,7 +206,7 @@ function makeCard(i){
     '<div class="body">'+(i.title||i.idea?'<h3>'+esc(i.title||i.idea)+'</h3>':'')+srcNote+
     (i.error?'<div class="err">✕ '+esc(i.error)+'</div>':'')+
     (i.prompt?'<div class="mono'+(isOpen?' open':'')+'">'+promptHtml(i)+'</div>':'')+
-    '<div class="tags"><span class="tag acc">'+esc(i.theme)+'</span>'+(isVid?'<span class="tag">T2VA · 16:9</span>':'<span class="tag">文生图</span>')+'<span class="tag">'+esc(i.status==='failed'?'失败':'ready 提示词')+'</span></div>'+
+    '<div class="tags"><span class="tag acc">'+esc(i.theme)+'</span>'+(i.style?'<span class="tag">'+esc(i.style)+'</span>':'')+(isVid?'<span class="tag">T2VA · 16:9</span>':'<span class="tag">文生图'+(i.aspect?' · '+esc(i.aspect):'')+'</span>')+'<span class="tag">'+esc(i.status==='failed'?'失败':'ready 提示词')+'</span></div>'+
     '</div>'+
     '<div class="foot"><span class="t">'+fmt(i.createdAt)+'</span>'+(i.prompt?'<button class="btn sm ghost" onclick="expand(this)">'+(isOpen?'收起':'展开')+'</button><button class="btn sm" onclick="copyPrompt(this)">复制</button>':'')+'</div>';
   const img=el.querySelector('img.cimg');

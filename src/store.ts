@@ -11,11 +11,15 @@ const MAX_INSPIRATIONS = 300;
 
 /** 默认主题库（与旧版预设一致；迁移旧 theme 字段时也会并入） */
 const DEFAULT_THEMES = ['general', 'nature', 'technology', 'fashion', 'surreal', 'city'];
+/** 默认风格库（注入图像与视频参考画面提示词；激活子集可为空 = 不注入风格）。导出供后台页面兜底展示复用 */
+export const DEFAULT_STYLES = ['photorealistic', 'cinematic', 'anime', 'watercolor', '3D render', 'minimalist'];
 const defaultSettings: InspirationSettings = {
   intervalMinutes: Number(process.env.DEFAULT_INTERVAL_MINUTES ?? 60),
   enabled: true,
   themes: [...DEFAULT_THEMES],
   activeThemes: [...DEFAULT_THEMES],
+  styles: [...DEFAULT_STYLES],
+  activeStyles: [...DEFAULT_STYLES],
   kinds: ['image', 'video'],
   sources: ['hot_topic', 'hot_image', 'original_idea'],
 };
@@ -72,9 +76,18 @@ export async function initStore(): Promise<void> {
     : [];
   if (!activeThemes.length) activeThemes = s.theme?.trim() ? [s.theme.trim()] : [...themes];
   if (!activeThemes.length) activeThemes = [...themes];
+  // 风格库迁移：缺失/为空 → 默认库；activeStyles 字段缺失 → 全激活（沿用主题库旧行为），
+  // 显式空数组 → 保留空（= 生成时不注入风格行），未知成员过滤掉
+  let styles = Array.isArray(s.styles) ? s.styles.map((t) => String(t).trim()).filter(Boolean) : [];
+  if (!styles.length) styles = [...DEFAULT_STYLES];
+  styles = [...new Set(styles)];
+  let activeStyles = Array.isArray(s.activeStyles)
+    ? s.activeStyles.map((t) => String(t).trim()).filter((t) => styles.includes(t))
+    : [...styles];
   settings = {
     ...defaultSettings, ...s,
     themes, activeThemes,
+    styles, activeStyles,
     kinds: s.kinds?.length ? [...s.kinds] : [...defaultSettings.kinds],
     sources: s.sources?.length ? [...s.sources] : [...defaultSettings.sources],
   };
@@ -83,10 +96,10 @@ export async function initStore(): Promise<void> {
 
 export const store = {
   getSettings(): InspirationSettings {
-    return { ...settings, themes: [...settings.themes], activeThemes: [...settings.activeThemes], kinds: [...settings.kinds], sources: [...settings.sources] };
+    return { ...settings, themes: [...settings.themes], activeThemes: [...settings.activeThemes], styles: [...settings.styles], activeStyles: [...settings.activeStyles], kinds: [...settings.kinds], sources: [...settings.sources] };
   },
   async setSettings(next: InspirationSettings): Promise<InspirationSettings> {
-    settings = { ...next, themes: [...next.themes], activeThemes: [...next.activeThemes], kinds: [...next.kinds], sources: [...next.sources] };
+    settings = { ...next, themes: [...next.themes], activeThemes: [...next.activeThemes], styles: [...next.styles], activeStyles: [...next.activeStyles], kinds: [...next.kinds], sources: [...next.sources] };
     await persistSettings();
     return this.getSettings();
   },

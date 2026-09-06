@@ -44,6 +44,10 @@ export interface InspirationSettings {
   themes: string[];
   /** 参与随机抽取的主题子集：每次生成只从其中随机取一个（勾选决定） */
   activeThemes: string[];
+  /** 风格库：全部风格（设置面板可增/删/改），注入图像与视频参考画面提示词 */
+  styles: string[];
+  /** 参与随机抽取的风格子集：可为空 = 本次生成不注入风格行 */
+  activeStyles: string[];
   kinds: InspirationKind[];
   sources: InspirationSource[];
 }
@@ -143,6 +147,10 @@ export interface Inspiration {
   kind: InspirationKind;
   source: InspirationSource;
   theme: string;
+  /** 本次生成选中的画面风格（从风格库随机取；未勾选任何风格时缺省 = 不注入风格） */
+  style?: string;
+  /** 本次生成选中的画面比例（仅图像灵感从固定池随机取，提示词与封面生图共用；视频固定 16:9） */
+  aspect?: string;
   /** 展示用中文短标题（10~15 字，点子步骤 LLM 产出；旧数据/解析失败时缺省，展示回退到 idea） */
   title?: string;
   /** 完整中文创意点子（提示词生成的核心输入，比 title 更详细） */
