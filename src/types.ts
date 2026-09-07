@@ -50,6 +50,11 @@ export interface InspirationSettings {
   activeStyles: string[];
   kinds: InspirationKind[];
   sources: InspirationSource[];
+  /** override 提示词（图像类专属）：键=主题库成员名，值=自定义提示词模板。
+   *  命中主题的 override 时跳过「图像提示词」LLM 请求，模板渲染后直接作为最终提示词并生图。 */
+  themeOverrides?: Record<string, string>;
+  /** override 提示词（图像类专属）：键=风格库成员名；主题无 override 时回退到命中风格的 override。 */
+  styleOverrides?: Record<string, string>;
 }
 
 /** 采集数据源运行时配置（前端可改，持久化于 data/scrape.json；环境变量为默认值） */

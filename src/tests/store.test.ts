@@ -180,3 +180,57 @@ test('损坏的 JSON 文件自动备份恢复为默认值', async () => {
   const files = await readdir(dir);
   assert.ok(files.some((f) => f.includes('corrupt-') && f.includes('settings')));
 });
+
+test('themeOverrides/styleOverrides 迁移：只保留库内成员，去首尾空白、剔空串，缺失时默认空映射', async () => {
+  const dir2 = await mkdtemp(join(tmpdir(), 'inspira-store-ovr-'));
+  await writeFile(join(dir2, 'settings.json'), JSON.stringify({
+    intervalMinutes: 30, enabled: false,
+    themes: ['a', 'b'], activeThemes: ['a'],
+    styles: ['anime', 'noir'], activeStyles: ['anime'],
+    themeOverrides: { a: '  T1  ', ghost: 'T?', b: '   ' },
+    styleOverrides: { anime: 'S1', noir: '  ', ghost2: 'S?' },
+    kinds: ['image'], sources: ['original_idea'],
+  }));
+  process.env.DATA_DIR = dir2;
+  try {
+    const s = await fresh();
+    await s.initStore();
+    const got = s.store.getSettings();
+    assert.deepEqual(got.themeOverrides, { a: 'T1' }, '保留库内成员并 trim；空串与未知键剔除');
+    assert.deepEqual(got.styleOverrides, { anime: 'S1' });
+  } finally {
+    process.env.DATA_DIR = dir;
+  }
+});
+
+test('旧 settings.json 无 override 字段：getSettings 回退为空映射', async () => {
+  const dir2 = await mkdtemp(join(tmpdir(), 'inspira-store-ovr2-'));
+  await writeFile(join(dir2, 'settings.json'), JSON.stringify({ intervalMinutes: 30, enabled: false, themes: ['a'], activeThemes: ['a'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }));
+  process.env.DATA_DIR = dir2;
+  try {
+    const s = await fresh();
+    await s.initStore();
+    assert.deepEqual(s.store.getSettings().themeOverrides, {});
+    assert.deepEqual(s.store.getSettings().styleOverrides, {});
+  } finally {
+    process.env.DATA_DIR = dir;
+  }
+});
+
+test('setSettings 规范化 override：剔除空串/空白与库外键，getSettings 返回副本', async () => {
+  const s = await fresh();
+  await s.initStore();
+  await s.store.setSettings({
+    ...settings, kinds: [...settings.kinds] as any, sources: [...settings.sources] as any,
+    themes: [...settings.themes], activeThemes: [...settings.activeThemes], styles: [...settings.styles], activeStyles: [...settings.activeStyles],
+    themeOverrides: { nature: ' X ', ghost: 'G', general: '   ' },
+    styleOverrides: { anime: ' A ' },
+  } as any);
+  const got = s.store.getSettings();
+  assert.deepEqual(got.themeOverrides, { nature: 'X' });
+  assert.deepEqual(got.styleOverrides, { anime: 'A' });
+  // getSettings 返回副本：改返回对象不影响内部
+  const copy = s.store.getSettings();
+  copy.themeOverrides!.nature = 'MUTATED';
+  assert.equal(s.store.getSettings().themeOverrides!.nature, 'X');
+});

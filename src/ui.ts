@@ -66,6 +66,10 @@ h2,h3{margin:0}
 .txtbox.keyed{-webkit-text-security:disc}
 .cb-hint{font-size:10.5px;color:#52525b;margin-top:5px}
 .tnew{margin-top:8px;min-height:30px;padding:5px 10px;font-size:12.5px}
+/* 多行文本编辑（override 提示词等） */
+.txtarea{display:block;width:100%;background:#0d0d13;border:1px solid var(--bd-2);border-radius:8px;padding:9px 11px;min-height:150px;max-height:42vh;overflow-y:auto;font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#b9c3e0;white-space:pre-wrap;word-break:break-word}
+.txtarea:focus-within{border-color:rgba(167,139,250,.6);box-shadow:0 0 0 2px rgba(139,92,246,.18)}
+.modal .txtarea{max-height:40vh}
 
 /* 主题库标签编辑器 */
 .themes{display:flex;flex-wrap:wrap;gap:6px;min-height:32px;align-items:center}
@@ -77,9 +81,16 @@ h2,h3{margin:0}
 .tchip .tname{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;border-radius:4px}
 .tchip .tname:hover{color:var(--acc)}
 .tchip .tname[contenteditable="true"]{outline:none;cursor:text;max-width:240px;white-space:pre-wrap;word-break:break-all;border-bottom:1px dashed var(--acc);color:var(--fg)}
+.tchip .tovr{background:transparent;border:0;color:var(--faint);font-size:11px;padding:1px 3px;cursor:pointer;flex:none;border-radius:6px;line-height:1.2}
+.tchip .tovr:hover{color:var(--acc);background:rgba(139,92,246,.16)}
+.tchip .tovr.on{color:var(--acc);text-shadow:0 0 6px rgba(139,92,246,.6)}
 .tchip .tdel{background:transparent;border:0;color:var(--faint);font-size:11px;padding:0 4px;cursor:pointer;flex:none;border-radius:50%}
 .tchip .tdel:hover:not(:disabled){color:#f87171;background:rgba(248,113,113,.12)}
 .tchip .tdel:disabled{color:#52525b;cursor:not-allowed}
+/* override 编辑弹窗辅助 */
+.ovr-place{font-size:11px;line-height:1.9;color:var(--muted);background:#0d0d0d;border:1px solid var(--bd);border-radius:9px;padding:8px 12px;margin:0 0 12px}
+.ovr-place code{font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--acc);background:rgba(139,92,246,.08);border-radius:4px;padding:0 4px}
+.ovr-place .k{color:var(--faint)}
 
 /* 采集源健康状态 */
 .src-health{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--faint)}

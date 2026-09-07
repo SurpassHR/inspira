@@ -100,6 +100,24 @@ test('PUT /api/settings 接受 activeStyles 为空数组（= 不指定风格）'
   assert.deepEqual(saved.activeStyles, []);
 });
 
+test('PUT /api/settings 接受 themeOverrides/styleOverrides 并校验键须为库内成员', async () => {
+  const H = await hdr();
+  const base = { intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime', 'noir'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] };
+  const badTheme = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ ...base, themeOverrides: { ghost: 'X' } }) });
+  assert.equal(badTheme.status, 400, 'themeOverrides 键必须在 themes 内');
+  const badStyle = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ ...base, styleOverrides: { watercolor: 'S' } }) });
+  assert.equal(badStyle.status, 400, 'styleOverrides 键必须在 styles 内');
+
+  const ok = await app.request('/api/settings', {
+    method: 'PUT', headers: H,
+    body: JSON.stringify({ ...base, themeOverrides: { general: 'Cinematic {idea}' }, styleOverrides: { anime: 'S {theme}' } }),
+  });
+  assert.equal(ok.status, 200);
+  const got = await (await app.request('/api/settings', { headers: H })).json() as { themeOverrides: Record<string, string>; styleOverrides: Record<string, string> };
+  assert.deepEqual(got.themeOverrides, { general: 'Cinematic {idea}' });
+  assert.deepEqual(got.styleOverrides, { anime: 'S {theme}' });
+});
+
 test('生成流程：未配置 LLM 时状态流转 queued → failed 且错误信息明确', async () => {
   const H = await hdr();
   const put = await app.request('/api/settings', {

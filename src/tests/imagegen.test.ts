@@ -266,6 +266,37 @@ test('generateImage：chat 兜底可解析 markdown 图片链接与裸 URL', asy
   }
 });
 
+test('generateImage：chat 兜底回复含图片链接但下载失败时如实报原因（不误报“未包含图片”）', async () => {
+  const h = await startServer((req, res, _body, hh) => {
+    if (req.method === 'POST' && req.url === '/v1/images/generations') {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{}');
+    } else if (req.method === 'POST' && req.url === '/v1/chat/completions') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: `![Generated Image](http://127.0.0.1:${hh.port}/tmp/xxx.jpg)` } }] }));
+    } else if (req.url === '/tmp/xxx.jpg') {
+      // 模拟中转临时文件短暂失效（此前 301 循环/5xx），下载必然失败
+      res.writeHead(503, { 'content-type': 'text/plain' });
+      res.end('origin unavailable');
+    } else { res.writeHead(404); res.end('{}'); }
+  });
+  try {
+    await llmcfg.saveLlmProvider({ id: 'ig', name: '生图中转', kind: 'openai_compat', apiKey: 'sk-imagegen-key', baseUrl: `http://127.0.0.1:${h.port}/v1`, models: ['img-model'] });
+    await assignImageGen('ig', 'img-model');
+    await assert.rejects(
+      generateImage('prompt'),
+      (err: Error) => err.message.includes('chat 兜底也不可用')
+        && err.message.includes('回复含图片链接但获取失败')
+        && err.message.includes('生图结果下载失败：HTTP 503')
+        && !err.message.includes('未包含图片'),
+    );
+  } finally {
+    h.server.close();
+    await assignImageGen(null);
+    for (const p of llmcfg.getLlmProviders()) await llmcfg.deleteLlmProvider(p.id);
+  }
+});
+
 test('generateImage：401 密钥被拒不触发 chat 兜底', async () => {
   const h = await startServer((req, res) => {
     if (req.url === '/v1/images/generations') {

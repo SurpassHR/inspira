@@ -238,3 +238,94 @@ test('视频灵感不调用生图；未提供 imagegen 依赖的图像灵感也�
   assert.equal(i.cover, undefined);
   assert.equal(called, 0);
 });
+
+test('图像灵感：主题命中 override 时跳过「图像提示词」请求，模板渲染直出并作为生图入参', async () => {
+  let promptCalls = 0;
+  const seen: string[] = [];
+  const deps = imageDeps({
+    idea: async () => '标题：雨夜霓虹书店的猫店长\n点子：霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。',
+    prompt: async () => { promptCalls++; return 'should-not-be-used'; },
+    imagegen: async (prompt) => { seen.push(prompt); return { file: 's1.png', model: 'm' }; },
+  });
+  const s: InspirationSettings = {
+    ...defaultSettings,
+    themeOverrides: { 自然: 'Cinematic wide shot of {idea} in {style} style, aspect {aspect}.' },
+  };
+  const item = await generateInspiration(s, seed, deps);
+  assert.equal(item.status, 'ready');
+  assert.equal(promptCalls, 0, '命中 override 时不得请求 LLM 图像提示词');
+  assert.equal(item.title, '雨夜霓虹书店的猫店长');
+  assert.equal(item.idea, '霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。', '点子步骤仍照常生成');
+  assert.equal(item.prompt, 'Cinematic wide shot of 霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。 in anime style, aspect 3:4.');
+  assert.deepEqual(seen, ['Cinematic wide shot of 霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。 in anime style, aspect 3:4.'], '封面生图直接用渲染后的 override 提示词');
+});
+
+test('override：主题优先于风格；主题未配置时回退到命中的风格', async () => {
+  let promptCalls = 0;
+  const both: InspirationSettings = {
+    ...defaultSettings,
+    themeOverrides: { 自然: 'T={theme} S={style}' },
+    styleOverrides: { anime: 'S={style} T={theme}' },
+  };
+  const item1 = await generateInspiration(both, seed, imageDeps({
+    prompt: async () => { promptCalls++; return 'x'; },
+  }));
+  assert.equal(item1.prompt, 'T=自然 S=anime', '两者都命中时主题 override 优先');
+
+  const styleOnly: InspirationSettings = {
+    ...defaultSettings,
+    styleOverrides: { anime: 'S={style} T={theme}' },
+  };
+  const item2 = await generateInspiration(styleOnly, seed, imageDeps({
+    prompt: async () => { promptCalls++; return 'x'; },
+  }));
+  assert.equal(item2.prompt, 'S=anime T=自然', '主题无 override 时回退到风格 override');
+  assert.equal(promptCalls, 0, '两条 override 路径都不应调用 LLM 图像提示词');
+});
+
+test('override：未命中（主题与风格均未配置）时照常请求 LLM 图像提示词', async () => {
+  let promptCalls = 0;
+  const deps = imageDeps({
+    prompt: async () => { promptCalls++; return 'Auto LLM prompt.'; },
+  });
+  const s: InspirationSettings = {
+    ...defaultSettings,
+    themeOverrides: { 科技: 'other theme only' },
+    styleOverrides: { watercolor: 'other style only' },
+  };
+  const item = await generateInspiration(s, seed, deps);
+  assert.equal(item.status, 'ready');
+  assert.equal(promptCalls, 1);
+  assert.equal(item.prompt, 'Auto LLM prompt.');
+});
+
+test('override：视频灵感不受影响（即使主题/风格配了 override 仍走视频提示词 LLM）', async () => {
+  let promptCalls = 0;
+  const deps = imageDeps({
+    material: async () => ({ source: 'original_idea', label: '原创点子' }),
+    idea: async () => '雨夜霓虹书店里的钢琴师',
+    prompt: async () => { promptCalls++; return 'A 6s MiniMax video prompt block.'; },
+  });
+  const s: InspirationSettings = {
+    ...settings, kinds: ['video'],
+    themeOverrides: { 自然: 'IMAGE ONLY OVERRIDE {idea}' },
+    styleOverrides: { anime: 'IMAGE ONLY STYLE OVERRIDE' },
+  };
+  const item = await generateInspiration(s, { ...seed, kind: 'video' }, deps);
+  assert.equal(item.status, 'ready');
+  assert.equal(promptCalls, 1);
+  assert.equal(item.prompt, 'A 6s MiniMax video prompt block.', 'override 仅作用于图像灵感');
+});
+
+test('override：未选风格/无标题/无比例时占位符替换为空串', async () => {
+  const s: InspirationSettings = {
+    ...defaultSettings,
+    activeStyles: [],
+    themeOverrides: { 自然: 's={style}|a={aspect}|t={title}|i={idea}' },
+  };
+  const sd = { ...seed, style: undefined, aspect: undefined };
+  const item = await generateInspiration(s, sd, imageDeps());
+  assert.equal(item.status, 'ready');
+  assert.equal(item.title, undefined);
+  assert.equal(item.prompt, 's=|a=|t=|i=雨夜里的霓虹书店');
+});

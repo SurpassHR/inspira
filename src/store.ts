@@ -13,6 +13,18 @@ const MAX_INSPIRATIONS = 300;
 const DEFAULT_THEMES = ['general', 'nature', 'technology', 'fashion', 'surreal', 'city'];
 /** 默认风格库（注入图像与视频参考画面提示词；激活子集可为空 = 不注入风格）。导出供后台页面兜底展示复用 */
 export const DEFAULT_STYLES = ['photorealistic', 'cinematic', 'anime', 'watercolor', '3D render', 'minimalist'];
+
+/** 规范化 override 提示词映射：只保留 keys 中的成员、去首尾空白、剔除空串、截断超长（2000） */
+function cleanOverrides(raw: unknown, keys: string[]): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const k of Object.keys(raw)) {
+    if (!keys.includes(k)) continue;
+    const v = String((raw as Record<string, unknown>)[k]).trim().slice(0, 2000);
+    if (v) out[k] = v;
+  }
+  return out;
+}
 const defaultSettings: InspirationSettings = {
   intervalMinutes: Number(process.env.DEFAULT_INTERVAL_MINUTES ?? 60),
   enabled: true,
@@ -22,6 +34,8 @@ const defaultSettings: InspirationSettings = {
   activeStyles: [...DEFAULT_STYLES],
   kinds: ['image', 'video'],
   sources: ['hot_topic', 'hot_image', 'original_idea'],
+  themeOverrides: {},
+  styleOverrides: {},
 };
 
 let settings: InspirationSettings = { ...defaultSettings, kinds: [...defaultSettings.kinds], sources: [...defaultSettings.sources] };
@@ -84,10 +98,14 @@ export async function initStore(): Promise<void> {
   let activeStyles = Array.isArray(s.activeStyles)
     ? s.activeStyles.map((t) => String(t).trim()).filter((t) => styles.includes(t))
     : [...styles];
+  // override 提示词迁移：只保留对应库内成员的键，剔除空串/空白（键随改名/删除在 UI 侧同步）
+  const themeOverrides = cleanOverrides(s.themeOverrides, themes);
+  const styleOverrides = cleanOverrides(s.styleOverrides, styles);
   settings = {
     ...defaultSettings, ...s,
     themes, activeThemes,
     styles, activeStyles,
+    themeOverrides, styleOverrides,
     kinds: s.kinds?.length ? [...s.kinds] : [...defaultSettings.kinds],
     sources: s.sources?.length ? [...s.sources] : [...defaultSettings.sources],
   };
@@ -96,10 +114,15 @@ export async function initStore(): Promise<void> {
 
 export const store = {
   getSettings(): InspirationSettings {
-    return { ...settings, themes: [...settings.themes], activeThemes: [...settings.activeThemes], styles: [...settings.styles], activeStyles: [...settings.activeStyles], kinds: [...settings.kinds], sources: [...settings.sources] };
+    return { ...settings, themes: [...settings.themes], activeThemes: [...settings.activeThemes], styles: [...settings.styles], activeStyles: [...settings.activeStyles], kinds: [...settings.kinds], sources: [...settings.sources], themeOverrides: { ...(settings.themeOverrides ?? {}) }, styleOverrides: { ...(settings.styleOverrides ?? {}) } };
   },
   async setSettings(next: InspirationSettings): Promise<InspirationSettings> {
-    settings = { ...next, themes: [...next.themes], activeThemes: [...next.activeThemes], styles: [...next.styles], activeStyles: [...next.activeStyles], kinds: [...next.kinds], sources: [...next.sources] };
+    settings = {
+      ...next, themes: [...next.themes], activeThemes: [...next.activeThemes], styles: [...next.styles], activeStyles: [...next.activeStyles],
+      kinds: [...next.kinds], sources: [...next.sources],
+      themeOverrides: cleanOverrides(next.themeOverrides, next.themes),
+      styleOverrides: cleanOverrides(next.styleOverrides, next.styles),
+    };
     await persistSettings();
     return this.getSettings();
   },

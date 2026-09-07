@@ -85,9 +85,42 @@ export function extractPictureRefs(text: string): { index: number; description: 
   return [...seen.entries()].map(([index, description]) => ({ index, description }));
 }
 
+/** override 提示词模板中支持的占位符（{theme}/{style}/{aspect}/{title}/{idea}），供后台编辑提示时展示 */
+export const OVERRIDE_PLACEHOLDERS = ['theme', 'style', 'aspect', 'title', 'idea'] as const;
+
+/**
+ * 渲染 override 模板：把 {theme}/{style}/{aspect}/{title}/{idea} 依次替换为本次生成的实际值。
+ * 风格未选中/标题缺省时为 undefined → 替换为空串；未出现的占位符保持原样（留给用户自定义）。
+ */
+export function renderOverrideTemplate(tpl: string, vars: { theme: string; style?: string; aspect?: string; title?: string; idea: string }): string {
+  return tpl
+    .replace(/\{theme\}/g, vars.theme)
+    .replace(/\{style\}/g, vars.style ?? '')
+    .replace(/\{aspect\}/g, vars.aspect ?? '')
+    .replace(/\{title\}/g, vars.title ?? '')
+    .replace(/\{idea\}/g, vars.idea);
+}
+
+/**
+ * 取本次命中 override 提示词（仅图像灵感；主题 override 优先，无则回退风格 override）。
+ * 返回去除首尾空白后的模板，未命中返回 undefined（走正常 LLM 提示词流程）。
+ */
+export function pickOverridePrompt(settings: InspirationSettings, kind: InspirationKind, theme: string, style?: string): string | undefined {
+  if (kind !== 'image') return undefined;
+  const themeTpl = settings.themeOverrides?.[theme]?.trim();
+  if (themeTpl) return themeTpl;
+  if (style) {
+    const styleTpl = settings.styleOverrides?.[style]?.trim();
+    if (styleTpl) return styleTpl;
+  }
+  return undefined;
+}
+
 /**
  * 生成一条灵感：
- * 1. 收集素材（热点/热图/无）→ 2. LLM 产出创意点子 → 3. LLM 按 krea2/mmh3 规范产出最终英文提示词
+ * 1. 收集素材（热点/热图/无）→ 2. LLM 产出创意点子 → 3. 产出最终英文提示词：
+ *    图像灵感命中主题/风格 override 时**跳过 LLM 图像提示词请求**，直接以渲染后的自定义提示词；
+ *    其余（含全部视频）按 krea2/mmh3 规范走 LLM
  * → 4. 图像类灵感若已分配「生图」模型，自动生成封面图。
  * 任一步失败都会返回 status='failed' 的条目并附带错误信息（不抛出）；
  * 封面生图失败只记 coverError，不影响提示词本身（status 仍为 ready）。
@@ -106,7 +139,11 @@ export async function generateInspiration(settings: InspirationSettings, seed: I
     const material = await deps.material(seed.source, seed.theme);
     // 点子步骤产出「标题（10~15 字，展示用）+ 点子正文（喂给提示词生成）」；解析失败时 title 缺省
     const { title, idea } = splitIdeaOutput(stripCodeFences((await deps.idea(material, seed.theme)).trim()));
-    const prompt = stripCodeFences(await deps.prompt(seed.kind, seed.theme, idea, material, seed.style, seed.aspect));
+    // 图像灵感命中 override（主题优先→风格回退）时直出：跳过「图像提示词」LLM 请求，模板渲染即最终提示词
+    const overrideTpl = pickOverridePrompt(settings, seed.kind, seed.theme, seed.style);
+    const prompt = overrideTpl !== undefined
+      ? renderOverrideTemplate(overrideTpl, { theme: seed.theme, style: seed.style, aspect: seed.aspect, title, idea })
+      : stripCodeFences((await deps.prompt(seed.kind, seed.theme, idea, material, seed.style, seed.aspect)).trim());
     // 视频提示词保留 <Picture N> 引用，并为每个引用生成配套英文生图提示词；
     // 单个参考画面的提示词生成失败不影响整条灵感（该画面 imagePrompt 留空）
     let pictures: PictureRef[] | undefined;

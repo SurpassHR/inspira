@@ -280,19 +280,19 @@ body{overflow:hidden}
       <section class="sec" id="sec-gen">
         ${!can ? '<div class="ro-banner">🔒 只读模式：您是 viewer 角色，设置修改仅管理员可用</div>' : ''}
         <div class="box ${can ? '' : 'locked'}">
-          <div class="sec-h"><h2>主题 · 风格库与自动生成</h2><span class="pw">风格注入图像与视频参考画面提示词 · 保存后即时生效并重排定时任务</span></div>
+          <div class="sec-h"><h2>主题 · 风格库与自动生成</h2><span class="pw">主题/风格可配 override 提示词（图像灵感命中即跳过图像提示词请求直接生图）· 保存后即时生效并重排定时任务</span></div>
           <div class="row">
             <div class="field">
               <label class="f">主题库（每次生成随机取一个）</label>
               <div class="themes" id="themeList" role="list" aria-label="主题列表"></div>
               <div class="txtbox tnew" id="themeNew" contenteditable="true" role="textbox" data-placeholder="输入新主题，回车添加…" aria-label="新主题"></div>
-              <div class="cb-hint" id="themeHint">点击 ○ 勾选参与随机 · 点击主题名改名 · ✕ 删除 · 回车添加</div>
+              <div class="cb-hint" id="themeHint">点击 ○ 勾选参与随机 · 点击主题名改名 · ✎ 编辑 override 提示词 · ✕ 删除 · 回车添加</div>
             </div>
             <div class="field">
               <label class="f">风格库（每次生成随机取一个）</label>
               <div class="themes" id="styleList" role="list" aria-label="风格列表"></div>
               <div class="txtbox tnew" id="styleNew" contenteditable="true" role="textbox" data-placeholder="输入新风格，回车添加…" aria-label="新风格"></div>
-              <div class="cb-hint" id="styleHint">点击 ○ 勾选参与随机 · 可全部取消 = 不指定风格 · 点击风格名改名 · ✕ 删除 · 回车添加</div>
+              <div class="cb-hint" id="styleHint">点击 ○ 勾选参与随机 · 可全部取消 = 不指定风格 · 点击风格名改名 · ✎ 编辑 override 提示词 · ✕ 删除 · 回车添加</div>
             </div>
           </div>
           <div class="row">
@@ -586,6 +586,24 @@ body{overflow:hidden}
   </div>
 </div>
 
+<!-- override 提示词编辑弹窗（主题/风格库共用：图像灵感命中即直出，跳过图像提示词 LLM 请求） -->
+<div class="overlay" id="ovrmodal">
+  <div class="modal wide">
+    <div class="mhead"><h2 id="ovrTitle">override 提示词</h2><button class="x" id="ovrClose" type="button" aria-label="关闭">✕</button></div>
+    <div class="ovr-place">图像灵感选中该主题时直接以这段文案作为最终图像提示词并生图，<b>跳过「图像提示词」LLM 请求</b>（点子步骤仍照常生成）；主题未配置时回退到本次命中的风格 override。可引用占位符：<code>{theme}</code> <code>{style}</code> <code>{aspect}</code> <code>{title}</code> <code>{idea}</code>，未出现的占位符替换为空。视频灵感不受影响。</div>
+    <div class="field">
+      <label class="f">自定义图像提示词模板（≤ 2000 字符；留空 = 不使用 override）</label>
+      <div class="txtarea" id="ovrText" contenteditable="true" role="textbox" data-placeholder="例如：Cinematic wide shot of {idea}, drenched in {style} lighting…" aria-label="override 提示词模板"></div>
+    </div>
+    <div class="mfoot">
+      <span class="pw" id="ovrMeta" style="margin-right:auto"></span>
+      <button class="btn ghost" id="ovrClear" type="button" style="display:none">清除</button>
+      <button class="btn ghost" id="ovrCancel" type="button">取消</button>
+      <button class="btn" id="ovrSave" type="button">保存</button>
+    </div>
+  </div>
+</div>
+
 <script>
 ${utilClientJs}
 const $=s=>document.querySelector(s);
@@ -815,13 +833,13 @@ $('#pwSave').addEventListener('click',async()=>{
 function closeModal(id){$(id).classList.remove('show');}
 $('#pwclose').onclick=()=>closeModal('#pwmodal');
 $('#pwCancel').onclick=()=>closeModal('#pwmodal');
-['#pwmodal','#dmodal','#umodal','#mfetch'].forEach(id=>{
+['#pwmodal','#dmodal','#umodal','#mfetch','#ovrmodal'].forEach(id=>{
   $(id).addEventListener('click',e=>{if(e.target===$(id))closeModal(id);});
 });
 document.addEventListener('keydown',e=>{
   if(e.key!=='Escape')return;
   if(SELECTS.some(s=>s.isOpen()))return; // Esc 只关下拉，不关面板
-  ['#pwmodal','#dmodal','#umodal','#mfetch'].forEach(id=>{if($(id).classList.contains('show'))closeModal(id);});
+  ['#pwmodal','#dmodal','#umodal','#mfetch','#ovrmodal'].forEach(id=>{if($(id).classList.contains('show'))closeModal(id);});
 });
 
 /* ===== 总览 ===== */
@@ -1035,18 +1053,21 @@ window.addEventListener('scroll',hideTip,true);
 
 /* ===== 生成设置（主题/风格库 + 间隔 + 开关 + 类型/来源） ===== */
 let enabled=true;
-/* 标签编辑器工厂：○/● 勾选参与随机、contenteditable 改名、✕ 删除、回车添加（大小写不敏感去重）。
- * minActive=激活子集下限：主题 1（至少 1 个参与随机）；风格 0（允许全部取消 = 本次生成不注入风格行）。 */
+/* 标签编辑器工厂：○/● 勾选参与随机、contenteditable 改名、✎ override 提示词、✕ 删除、回车添加（大小写不敏感去重）。
+ * minActive=激活子集下限：主题 1（至少 1 个参与随机）；风格 0（允许全部取消 = 本次生成不注入风格行）。
+ * override 映射（键=库内条目名）随条目维护：改名时迁移到新名，删除时同步清除；cfg.onEditOvr(name,editor) 打开编辑弹窗。 */
 function makeTagEditor(cfg){
   const list=cfg.list,hintEl=cfg.hint;
-  let items=[],active=[];
+  let items=[],active=[],overrides={},api;
   const isActive=v=>active.some(x=>x.toLowerCase()===v.toLowerCase());
+  const hasOvr=v=>Object.prototype.hasOwnProperty.call(overrides,v);
   function flash(msg){hintEl.textContent=msg;setTimeout(()=>{hintEl.textContent=cfg.hintBase;},1800);}
   function render(){
     list.innerHTML=items.map((t,i)=>
       '<span class="tchip'+(isActive(t)?' on':'')+'" data-i="'+i+'" role="listitem">'+
       '<span class="tdot" role="checkbox" aria-checked="'+(isActive(t)?'true':'false')+'" tabindex="0" aria-label="勾选参与随机：'+esc(t)+'">'+(isActive(t)?'●':'○')+'</span>'+
       '<span class="tname">'+esc(t)+'</span>'+
+      '<button class="tovr'+(hasOvr(t)?' on':'')+'" type="button" aria-label="编辑'+cfg.noun+'的 override 提示词：'+esc(t)+'" title="'+(hasOvr(t)?'已设置 override 提示词 · 点击编辑':'设置 override 提示词')+'">✎</button>'+
       '<button class="tdel" type="button" aria-label="删除'+cfg.noun+' '+esc(t)+'"'+(items.length<2?' disabled':'')+'">✕</button></span>'
     ).join('');
   }
@@ -1057,7 +1078,10 @@ function makeTagEditor(cfg){
     const i=+nm.parentElement.dataset.i;
     if(!Number.isFinite(i)||items[i]===undefined)return;
     const wasActive=isActive(items[i]);
-    items[i]=v;render();
+    const wasOvr=hasOvr(orig);
+    items[i]=v;
+    if(wasOvr){overrides[v]=overrides[orig];delete overrides[orig];}
+    render();
     if(wasActive){
       const ai=active.findIndex(x=>x.toLowerCase()===orig.toLowerCase());
       if(ai>-1)active[ai]=v;
@@ -1078,6 +1102,12 @@ function makeTagEditor(cfg){
       render();
       return;
     }
+    const ov=e.target.closest('.tovr');
+    if(ov){
+      const i=+ov.closest('.tchip').dataset.i;
+      if(Number.isFinite(i)&&api&&items[i]!==undefined&&cfg.onEditOvr)cfg.onEditOvr(items[i],api);
+      return;
+    }
     const del=e.target.closest('.tdel');
     if(del&&!del.disabled){
       const i=+del.closest('.tchip').dataset.i;
@@ -1085,6 +1115,7 @@ function makeTagEditor(cfg){
         const v=items[i];
         items.splice(i,1);
         active=active.filter(x=>x.toLowerCase()!==v.toLowerCase());
+        delete overrides[v];
         if(cfg.minActive>0&&!active.length)active=[...items];
         render();
       }
@@ -1124,18 +1155,22 @@ function makeTagEditor(cfg){
     cfg.input.set('');render();
   }
   cfg.input.el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();add();}});
-  return {
+  api={
+    get noun(){return cfg.noun;},
     get items(){return items.slice();},
     get active(){return active.slice();},
-    set(it,ac){items=it.slice();active=ac.slice();render();},
+    get overrides(){return {...overrides};},
+    set(it,ac,ov){items=it.slice();active=ac.slice();overrides=(ov&&typeof ov==='object')?{...ov}:{};render();},
+    setOvr(name,text){const t=String(text||'').trim().slice(0,2000);if(t)overrides[name]=t;else delete overrides[name];render();},
   };
+  return api;
 }
 const themeNew=makeTextField($('#themeNew'),{placeholder:'输入新主题，回车添加…',maxlength:40});
 const styleNew=makeTextField($('#styleNew'),{placeholder:'输入新风格，回车添加…',maxlength:40});
-const THEME_HINT='点击 ○ 勾选参与随机 · 点击主题名改名 · ✕ 删除 · 回车添加';
-const STYLE_HINT='点击 ○ 勾选参与随机 · 可全部取消 = 不指定风格 · 点击风格名改名 · ✕ 删除 · 回车添加';
-const themeEd=makeTagEditor({list:$('#themeList'),input:themeNew,hint:$('#themeHint'),hintBase:THEME_HINT,noun:'主题',minActive:1});
-const styleEd=makeTagEditor({list:$('#styleList'),input:styleNew,hint:$('#styleHint'),hintBase:STYLE_HINT,noun:'风格',minActive:0});
+const THEME_HINT='点击 ○ 勾选参与随机 · 点击主题名改名 · ✎ 编辑 override 提示词 · ✕ 删除 · 回车添加';
+const STYLE_HINT='点击 ○ 勾选参与随机 · 可全部取消 = 不指定风格 · 点击风格名改名 · ✎ 编辑 override 提示词 · ✕ 删除 · 回车添加';
+const themeEd=makeTagEditor({list:$('#themeList'),input:themeNew,hint:$('#themeHint'),hintBase:THEME_HINT,noun:'主题',minActive:1,onEditOvr:(name,ed)=>openOvr(ed,name)});
+const styleEd=makeTagEditor({list:$('#styleList'),input:styleNew,hint:$('#styleHint'),hintBase:STYLE_HINT,noun:'风格',minActive:0,onEditOvr:(name,ed)=>openOvr(ed,name)});
 
 const intervalStepper=makeStepper($('#intervalStepper'));
 const enabledSw=makeSwitch($('#enabledSw'));
@@ -1155,26 +1190,28 @@ function arrEq(a,b){if(a.length!==b.length)return false;for(let i=0;i<a.length;i
 function setEq(a,b){if(a.length!==b.length)return false;
   const n=x=>JSON.stringify(x.map(v=>String(v).toLowerCase()).sort());
   return n(a)===n(b);}
-function captureGenBase(){genBase={interval:intervalStepper.get(),enabled:enabledSw.get(),themes:themeEd.items,activeThemes:themeEd.active,styles:styleEd.items,activeStyles:styleEd.active,kinds:kinds.slice(),sources:sources.slice()};}
+function ovrEq(a,b){const ka=Object.keys(a),kb=Object.keys(b);if(ka.length!==kb.length)return false;return ka.every(k=>a[k]===b[k]);}
+function captureGenBase(){genBase={interval:intervalStepper.get(),enabled:enabledSw.get(),themes:themeEd.items,activeThemes:themeEd.active,styles:styleEd.items,activeStyles:styleEd.active,themeOverrides:themeEd.overrides,styleOverrides:styleEd.overrides,kinds:kinds.slice(),sources:sources.slice()};}
 function genDirty(){
   if(!genBase)return false;
   return genBase.interval!==intervalStepper.get()||genBase.enabled!==enabledSw.get()||
     !arrEq(genBase.themes,themeEd.items)||!setEq(genBase.activeThemes,themeEd.active)||
     !arrEq(genBase.styles,styleEd.items)||!setEq(genBase.activeStyles,styleEd.active)||
+    !ovrEq(genBase.themeOverrides,themeEd.overrides)||!ovrEq(genBase.styleOverrides,styleEd.overrides)||
     !setEq(genBase.kinds,kinds)||!setEq(genBase.sources,sources);
 }
 function applyGenBase(){
   if(!genBase)return;
   intervalStepper.set(genBase.interval);enabledSw.set(genBase.enabled);
-  themeEd.set(genBase.themes,genBase.activeThemes);
-  styleEd.set(genBase.styles,genBase.activeStyles);
+  themeEd.set(genBase.themes,genBase.activeThemes,genBase.themeOverrides);
+  styleEd.set(genBase.styles,genBase.activeStyles,genBase.styleOverrides);
   kinds=genBase.kinds.slice();sources=genBase.sources.slice();
   renderKindsChips();
 }
 async function saveGenAsk(){
   try{
     await jf('/api/settings',{method:'PUT',headers:{'content-type':'application/json'},
-      body:JSON.stringify({intervalMinutes:intervalStepper.get(),enabled:enabledSw.get(),themes:themeEd.items,activeThemes:themeEd.active,styles:styleEd.items,activeStyles:styleEd.active,kinds,sources})});
+      body:JSON.stringify({intervalMinutes:intervalStepper.get(),enabled:enabledSw.get(),themes:themeEd.items,activeThemes:themeEd.active,styles:styleEd.items,activeStyles:styleEd.active,themeOverrides:themeEd.overrides,styleOverrides:styleEd.overrides,kinds,sources})});
     toast('已保存设置');
     captureGenBase();refreshAsk();
     return true;
@@ -1186,11 +1223,13 @@ async function loadSettings(){
     const th=s.themes&&s.themes.length?s.themes.slice():['general'];
     let thA=(s.activeThemes&&s.activeThemes.length)?s.activeThemes.filter(t=>th.includes(t)):[...th];
     if(!thA.length)thA=[...th];
-    themeEd.set(th,thA);
+    const ovTh=(s.themeOverrides&&typeof s.themeOverrides==='object')?Object.fromEntries(Object.entries(s.themeOverrides).filter(([k])=>th.includes(k))):{};
+    themeEd.set(th,thA,ovTh);
     const st=(s.styles&&s.styles.length)?s.styles.slice():${JSON.stringify(DEFAULT_STYLES)};
     // activeStyles 字段缺失（旧版数据）→ 全激活；显式空数组 → 保持空（= 不指定风格）
     const stA=Array.isArray(s.activeStyles)?s.activeStyles.filter(t=>st.includes(t)):[...st];
-    styleEd.set(st,stA);
+    const ovSt=(s.styleOverrides&&typeof s.styleOverrides==='object')?Object.fromEntries(Object.entries(s.styleOverrides).filter(([k])=>st.includes(k))):{};
+    styleEd.set(st,stA,ovSt);
     intervalStepper.set(s.intervalMinutes);enabledSw.set(s.enabled);
     kinds=s.kinds.slice();sources=s.sources.slice();
     renderKindsChips();
@@ -1199,6 +1238,45 @@ async function loadSettings(){
 }
 $('#genReload').addEventListener('click',()=>{if(guardAsk())return;loadSettings();toast('已重新加载当前设置');});
 ['click','input','keydown','focusout'].forEach(ev=>$('#sec-gen').addEventListener(ev,refreshAsk));
+
+/* ===== 主题/风格 override 提示词编辑（图像灵感命中即直出：跳过「图像提示词」LLM 请求，模板渲染后直接生图） ===== */
+function makeArea(el){
+  const NBSP=String.fromCharCode(160);
+  el.addEventListener('paste',e=>{
+    e.preventDefault();
+    const t=(((e.clipboardData||window.clipboardData).getData('text/plain')||'').split(NBSP).join(' '));
+    document.execCommand('insertText',false,t);
+  });
+  el.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();el.blur();}});
+  const val=()=>{const t=el.innerText!=null?el.innerText:el.textContent;return String(t||'').split(NBSP).join(' ');};
+  const set=v=>{el.textContent=String(v??'');};
+  return {el,get:()=>val().trim(),set};
+}
+const ovrArea=makeArea($('#ovrText'));
+let ovrEd=null,ovrName='';
+function openOvr(ed,name){
+  ovrEd=ed;ovrName=name;
+  $('#ovrTitle').textContent=ed.noun+' override 提示词';
+  const cur=ed.overrides[name]||'';
+  ovrArea.set(cur);
+  $('#ovrMeta').textContent=cur?'已设置 · 条目：'+name:'条目：'+name+'（未设置）';
+  $('#ovrClear').style.display=cur?'':'none';
+  $('#ovrmodal').classList.add('show');
+  setTimeout(()=>ovrArea.el.focus(),50);
+}
+function closeOvr(){ovrEd=null;ovrName='';ovrArea.set('');$('#ovrmodal').classList.remove('show');}
+$('#ovrSave').addEventListener('click',()=>{
+  if(!ovrEd)return;
+  let v=ovrArea.get();
+  if(v.length>2000){toast('提示词过长，已截断为 2000 字符',false);v=v.slice(0,2000);}
+  const nm=ovrName;
+  ovrEd.setOvr(nm,v);
+  toast(v?('已为「'+nm+'」设置 override 提示词'):('已清除「'+nm+'」的 override 提示词'));
+  closeOvr();refreshAsk();
+});
+$('#ovrClear').addEventListener('click',()=>{ovrArea.set('');$('#ovrClear').style.display='none';ovrArea.el.focus();});
+$('#ovrCancel').addEventListener('click',closeOvr);
+$('#ovrClose').addEventListener('click',closeOvr);
 
 /* ===== 采集源（provider 白名单 + 自定义 URL + 健康） ===== */
 const SRC_PROVIDERS=[

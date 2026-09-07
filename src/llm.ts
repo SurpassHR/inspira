@@ -383,11 +383,18 @@ async function chatImageGenerate(target: LlmTarget, prompt: string, timeoutMs: n
     const data = (await res.json().catch(() => null)) as ChatImageResponse | null;
     const message = data?.choices?.[0]?.message;
     if (!message) throw new Error('生图 chat 兜底失败：响应中没有 message');
+    // 逐条尝试提取到的图片：失败时记下真实原因而不是吞掉，便于诊断中转/下载侧问题
+    let fetchError: Error | null = null;
     for (const u of extractImageUrls(message)) {
-      const bytes = u.startsWith('data:')
-        ? decodeDataUrl(u)
-        : await downloadImageBytes(u, timeoutMs, signal).catch(() => null);
+      let bytes: Buffer | null = null;
+      try {
+        bytes = u.startsWith('data:') ? decodeDataUrl(u) : await downloadImageBytes(u, timeoutMs, signal);
+      } catch (err) {
+        if (!fetchError) fetchError = err instanceof Error ? err : new Error(String(err));
+        continue;
+      }
       if (bytes && bytes.length > 0) return { bytes, ext: sniffImageExt(bytes) };
+      if (!fetchError) fetchError = new Error('图片内容为空');
     }
     // 部分中转把整张图以纯 base64 文本放在正文里
     let content = message.content;
@@ -396,6 +403,7 @@ async function chatImageGenerate(target: LlmTarget, prompt: string, timeoutMs: n
       const bytes = Buffer.from(content.replace(/\s+/g, ''), 'base64');
       if (bytes.length > 64) return { bytes, ext: sniffImageExt(bytes) };
     }
+    if (fetchError) throw new Error(`生图 chat 兜底失败：回复含图片链接但获取失败：${fetchError.message}`);
     const head = typeof content === 'string' && content ? `（内容开头：${bodyExcerpt(content)}）` : '';
     throw new Error(`生图 chat 兜底失败：回复中未包含图片${head}`);
   } catch (err) {

@@ -10,10 +10,18 @@ export const settingsSchema = z.object({
   activeStyles: z.array(z.string().trim().min(1).max(100)),
   kinds: z.array(z.enum(['image', 'video'])).min(1),
   sources: z.array(z.enum(['hot_topic', 'hot_image', 'original_idea'])).min(1),
+  // override 提示词：键=库内成员名，值=自定义提示词模板（命中时跳过「图像提示词」LLM 请求直接生图）。
+  // 主题优先，风格回退；空值/空串在保存时被剔除，这里仅允许非库内键被 reject。
+  themeOverrides: z.record(z.string().min(1).max(100), z.string().trim().max(2000)).default({}),
+  styleOverrides: z.record(z.string().min(1).max(100), z.string().trim().max(2000)).default({}),
 }).strict().refine((s) => s.activeThemes.every((t) => s.themes.includes(t)), {
   message: 'activeThemes 必须是 themes 的子集',
 }).refine((s) => s.activeStyles.every((t) => s.styles.includes(t)), {
   message: 'activeStyles 必须是 styles 的子集',
+}).refine((s) => Object.keys(s.themeOverrides).every((k) => s.themes.includes(k)), {
+  message: 'themeOverrides 的键必须是 themes 中的主题',
+}).refine((s) => Object.keys(s.styleOverrides).every((k) => s.styles.includes(k)), {
+  message: 'styleOverrides 的键必须是 styles 中的风格',
 });
 
 export type SettingsInput = z.infer<typeof settingsSchema>;
