@@ -199,7 +199,7 @@ test('GET /api/source-health 返回全部 provider 的健康快照（含启用�
   assert.equal(res.status, 200);
   const body = await res.json() as { providers: { id: string; label: string; enabled: boolean; lastSuccessAt: string | null; lastFailureAt: string | null; lastError: string | null; consecutiveFailures: number; coolingDown: boolean; cooldownRemainingMs: number }[] };
   const ids = body.providers.map((p) => p.id);
-  for (const expected of ['wikimedia', 'bing', 'openverse', 'google', 'custom', 'x']) {
+  for (const expected of ['wikimedia', 'bing', 'openverse', 'danbooru', 'rule34', 'google', 'custom', 'x']) {
     assert.ok(ids.includes(expected), `缺少 provider ${expected}`);
   }
   for (const p of body.providers) {

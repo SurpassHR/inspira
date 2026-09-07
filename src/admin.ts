@@ -590,7 +590,7 @@ body{overflow:hidden}
 <div class="overlay" id="ovrmodal">
   <div class="modal wide">
     <div class="mhead"><h2 id="ovrTitle">override 提示词</h2><button class="x" id="ovrClose" type="button" aria-label="关闭">✕</button></div>
-    <div class="ovr-place">图像灵感选中该主题时直接以这段文案作为最终图像提示词并生图，<b>跳过「图像提示词」LLM 请求</b>（点子步骤仍照常生成）；主题未配置时回退到本次命中的风格 override。可引用占位符：<code>{theme}</code> <code>{style}</code> <code>{aspect}</code> <code>{title}</code> <code>{idea}</code>，未出现的占位符替换为空。视频灵感不受影响。</div>
+    <div class="ovr-place">图像灵感选中该主题时直接以这段文案作为最终图像提示词并生图，<b>跳过「图像提示词」LLM 请求</b>（点子步骤仍照常生成）；主题未配置时回退到本次命中的风格 override。可引用占位符：<code>{theme}</code> <code>{style}</code> <code>{aspect}</code> <code>{title}</code> <code>{idea}</code>（取不到值的替换为空）；<b>模板未写 <code>{idea}</code> 时系统会把本次点子自动追加到末尾</b>，保证画面随灵感变化——显式写了 <code>{idea}</code> 则完全按模板。视频灵感不受影响。</div>
     <div class="field">
       <label class="f">自定义图像提示词模板（≤ 2000 字符；留空 = 不使用 override）</label>
       <div class="txtarea" id="ovrText" contenteditable="true" role="textbox" data-placeholder="例如：Cinematic wide shot of {idea}, drenched in {style} lighting…" aria-label="override 提示词模板"></div>
@@ -1281,6 +1281,7 @@ $('#ovrClose').addEventListener('click',closeOvr);
 /* ===== 采集源（provider 白名单 + 自定义 URL + 健康） ===== */
 const SRC_PROVIDERS=[
   {id:'wikimedia',n:'Wikimedia'},{id:'bing',n:'Bing'},{id:'openverse',n:'Openverse'},
+  {id:'danbooru',n:'Danbooru'},{id:'rule34',n:'Rule34'},
   {id:'google',n:'Google'},{id:'custom',n:'自定义JSON'},{id:'x',n:'X/Twitter'},
 ];
 let scrapeProviders=[];

@@ -270,7 +270,7 @@ test('override：主题优先于风格；主题未配置时回退到命中的风
   const item1 = await generateInspiration(both, seed, imageDeps({
     prompt: async () => { promptCalls++; return 'x'; },
   }));
-  assert.equal(item1.prompt, 'T=自然 S=anime', '两者都命中时主题 override 优先');
+  assert.equal(item1.prompt, 'T=自然 S=anime\n雨夜里的霓虹书店', '两者都命中时主题 override 优先；模板未写 {idea} 自动追加点子');
 
   const styleOnly: InspirationSettings = {
     ...defaultSettings,
@@ -279,8 +279,40 @@ test('override：主题优先于风格；主题未配置时回退到命中的风
   const item2 = await generateInspiration(styleOnly, seed, imageDeps({
     prompt: async () => { promptCalls++; return 'x'; },
   }));
-  assert.equal(item2.prompt, 'S=anime T=自然', '主题无 override 时回退到风格 override');
+  assert.equal(item2.prompt, 'S=anime T=自然\n雨夜里的霓虹书店', '主题无 override 时回退到风格 override；同样自动追加点子');
   assert.equal(promptCalls, 0, '两条 override 路径都不应调用 LLM 图像提示词');
+});
+
+test('override：模板未引用 {idea} 时自动追加点子；显式引用则完全按模板', async () => {
+  let promptCalls = 0;
+  const deps = imageDeps({
+    idea: async () => '标题：雨夜霓虹书店的猫店长\n点子：霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。',
+    prompt: async () => { promptCalls++; return 'x'; },
+  });
+  // 模板未写 {idea}：渲染结果末尾自动追加点子正文（不追加标题）
+  const auto = await generateInspiration({
+    ...defaultSettings,
+    themeOverrides: { 自然: 'Neon alley, cinematic' },
+  }, seed, deps);
+  assert.equal(auto.prompt, 'Neon alley, cinematic\n霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。');
+  // 模板显式写了 {idea}：完全按模板，不重复追加
+  const explicit = await generateInspiration({
+    ...defaultSettings,
+    themeOverrides: { 自然: 'Shot of {idea}, moody' },
+  }, seed, deps);
+  assert.equal(explicit.prompt, 'Shot of 霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。, moody');
+  assert.equal(promptCalls, 0);
+});
+
+test('override：点子为空时不追加多余换行', async () => {
+  const s: InspirationSettings = {
+    ...defaultSettings,
+    themeOverrides: { 自然: 'Plain prompt' },
+  };
+  const item = await generateInspiration(s, seed, imageDeps({
+    idea: async () => '',
+  }));
+  assert.equal(item.prompt, 'Plain prompt');
 });
 
 test('override：未命中（主题与风格均未配置）时照常请求 LLM 图像提示词', async () => {

@@ -37,6 +37,9 @@ const schema = z.object({
   SCRAPE_FAIL_COOLDOWN_MS: z.coerce.number().int().min(0).default(300_000),
   // X（Twitter）图片/推文素材：需 OAuth2 Bearer Token（付费层级），未配置则禁用该 provider
   X_BEARER_TOKEN: z.string().default(''),
+  // Rule34 API 鉴权（免费注册后于 rule34.xxx 账号设置页获取）：两者齐备才启用该 provider
+  RULE34_API_KEY: z.string().default(''),
+  RULE34_USER_ID: z.string().default(''),
 
   // 后台管理（登录 + 角色权限，见 README「后台管理」）
   // 会话有效期（小时）：登录后 Cookie 保持时长；服务重启会清空全部会话需重新登录

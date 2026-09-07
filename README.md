@@ -89,6 +89,7 @@ npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SS
 | `SCRAPE_TIMEOUT_MS` | `15000` | 单个 provider 抓取超时（代理链路抖动时 8s 偏紧，故默认 15s） |
 | `SCRAPE_FAIL_COOLDOWN_MS` | `300000` | 图像源失败后的冷却期（毫秒）：冷却期内跳过该源，避免定时任务每次空等超时；`0`=禁用冷却 |
 | `X_BEARER_TOKEN` | 空 | X/Twitter OAuth2 Bearer Token；配置后把 `x` 加入白名单 |
+| `RULE34_API_KEY` / `RULE34_USER_ID` | 空 | Rule34 官方 API 鉴权（免费注册后于 `rule34.xxx → 账号 → options` 获取）；两者齐备且白名单含 `rule34` 才启用 |
 | `SESSION_TTL_HOURS` | `168` | 后台会话有效期（小时）；Cookie 到期需重新登录，服务重启也会清空全部会话 |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 空 | 可选：首次启动（`data/auth.json` 尚无任何用户时）自动种子创建管理员；留空则用 `/admin/setup` 页面创建 |
 
@@ -184,7 +185,7 @@ NODE_TLS_REJECT_UNAUTHORIZED=0 npm start
 
 **风格库**：与主题库同款的标签编辑器，维护一组「画面风格」（默认含 photorealistic / cinematic / anime 等，可自由增删改名）。每次生成从勾选的风格中**随机取一个**，注入到本次 LLM 请求的 `画面风格：…` 行——作用于**图像灵感的最终英文提示词**与**视频 `<Picture N>` 参考画面的配套生图提示词**（视频提示词正文与系统提示词规范不受影响；图像封面的自动生图直接使用最终提示词，风格自动继承）。可以把风格**全部取消勾选** = 本次生成不指定风格，由模型按 krea2 规范自由发挥；实际选中的风格会随灵感条目保存，并在画廊卡片与后台详情中展示。
 
-**主题/风格 override 提示词（自定义提示词直出图像）**：给某个主题或风格额外配置一段「override 模板」（chips 上的 ✎ 按钮编辑）。当某条图像灵感本次选中的主题配了 override 时，生成链路**跳过「图像提示词」的 LLM 请求**（点子步骤照常），直接把模板渲染为最终英文提示词并继续自动生图——卡片 prompt 与封面都基于你的自定义文案，省一次文本 LLM 调用、画面内容与风格完全可控。主题配置了 override 时优先于风格；主题未配置才回退到本次命中的风格 override。模板可引用占位符 `{theme}` `{style}` `{aspect}` `{title}` `{idea}`（未出现/取不到的替换为空串，例如风格未选中时 `{style}` 为空）。条目改名时 override 自动随新名迁移、删除条目同步清除；该能力**仅作用于图像灵感**，视频提示词正文与 `<Picture N>` 参考画面的生图提示词不受影响。
+**主题/风格 override 提示词（自定义提示词直出图像）**：给某个主题或风格额外配置一段「override 模板」（chips 上的 ✎ 按钮编辑）。当某条图像灵感本次选中的主题配了 override 时，生成链路**跳过「图像提示词」的 LLM 请求**（点子步骤照常），直接把模板渲染为最终英文提示词并继续自动生图——卡片 prompt 与封面都基于你的自定义文案，省一次文本 LLM 调用、画面内容与风格完全可控。主题配置了 override 时优先于风格；主题未配置才回退到本次命中的风格 override。模板可引用占位符 `{theme}` `{style}` `{aspect}` `{title}` `{idea}`（未出现/取不到的替换为空串，例如风格未选中时 `{style}` 为空）；**模板未写 `{idea}` 时系统会把本次点子自动追加到提示词末尾**，保证画面随灵感变化（显式写了 `{idea}` 则完全按模板）。条目改名时 override 自动随新名迁移、删除条目同步清除；该能力**仅作用于图像灵感**，视频提示词正文与 `<Picture N>` 参考画面的生图提示词不受影响。
 
 **画面比例**：图像灵感每次生成从 `1:1 / 4:3 / 3:4 / 16:9 / 9:16 / 3:2 / 2:3` 中**随机取一个**——注入到最终提示词（构图与取景按该比例设计），自动生图时映射为标准 `size` 参数（横 1536×1024 / 竖 1024×1536 / 方 1024×1024），让封面图真正按该比例出图；生图端点不支持 `size` 参数时会自动去参重试，不影响出图。视频灵感固定 16:9（MiniMax H3 规范），不参与随机。实际选中的比例随条目保存，并在画廊卡片「文生图 · 比例」标签展示。
 
@@ -195,11 +196,13 @@ NODE_TLS_REJECT_UNAUTHORIZED=0 npm start
 | `wikimedia` | Wikimedia Commons 官方搜索 API（无 key，稳定合规） | ✔ | 推荐 |
 | `bing` | `www.bing.com/images/async` HTML + `iusc` 的 `m` 属性解析（参考 `bing_image_downloader`） | ✔ | 无需 key |
 | `openverse` | Openverse 官方 API（低频无需 key，含 CC 许可信息） | ✔ | 推荐 |
+| `danbooru` | Danbooru 官方 JSON API，**仅抓取 `rating:s`（safe）** | ✗ | 低频匿名限速；多词查询为标签 AND |
+| `rule34` | Rule34 官方 dapi JSON，**仅抓取 `rating:safe`** | ✗ | 需免费 API key（`RULE34_API_KEY`+`RULE34_USER_ID`）；该站 SFW 图占比低 |
 | `google` | `www.google.com/search?tbm=isch` + `AF_initDataCallback` 数据块提取（参考 `google-images` / `g-i-s`） | ✗ | **常被反爬拦截**（需要浏览器渲染如 selenium 才稳定），开启后不稳定 |
 | `x` | 官方 v2 search/recent + Bearer Token，提取带媒体的推文（账号池方案参考 `twscrape`） | ✗ | 需付费 Token，默认关 |
 | `custom` | `HOT_IMAGES_URL` 自定义 JSON 契约 | ✔ | 可接入任意图片源 |
 
-**ToS 提示**：Bing/Google 的 HTML 抓取与其服务条款存在冲突、且随时可能失效，仅供个人灵感获取、低频使用；Wikimedia/Openverse 使用官方 API 无此问题。请遵守目标网站条款与 robots 规范。
+**ToS 提示**：Bing/Google 的 HTML 抓取与其服务条款存在冲突、且随时可能失效，仅供个人灵感获取、低频使用；Wikimedia/Openverse 使用官方 API 无此问题。Danbooru/Rule34 走官方 JSON API，请求中**硬过滤 SFW 评级**（`rating:s` / `rating:safe`），请低频使用并遵守其限速与条款。
 
 CLI 直达抓取（不经 LLM）：
 

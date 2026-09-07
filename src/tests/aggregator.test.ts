@@ -6,8 +6,10 @@ import { beforeEach, test } from 'node:test';
 
 // 先设环境再动态导入（config 为单例，解析时机在模块加载）
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'inspira-agg-'));
-process.env.IMAGE_SCRAPE_PROVIDERS = 'wikimedia,bing,openverse,x';
+process.env.IMAGE_SCRAPE_PROVIDERS = 'wikimedia,bing,openverse,x,danbooru,rule34';
 process.env.X_BEARER_TOKEN = 'test-token';
+process.env.RULE34_API_KEY = 'test-key';
+process.env.RULE34_USER_ID = 'test-user';
 
 const providers = await import('../sources/providers.js');
 const { aggregateImages, themeToQueries, THEME_QUERIES, enabledProviders, clearProviderCooldowns, getProviderHealth } = await import('../sources/aggregator.js');
@@ -79,6 +81,35 @@ test('parseOpenverse：提取 title/url/foreign_landing_url', () => {
   assert.equal(items[0]!.url, 'https://www.flickr.com/photos/x/1');
 });
 
+test('parseBooruPosts：danbooru 形状优先 large_file_url，标题取角色/画师，带详情页 URL', () => {
+  const json = [
+    { id: 1001, large_file_url: 'https://cdn.donmai.us/sample/a.jpg', file_url: 'https://cdn.donmai.us/original/a.jpg', tag_string_character: 'hatsune_miku', tag_string_artist: 'some_artist' },
+    { id: 1002, file_url: 'https://cdn.donmai.us/original/b.png', tag_string_character: '' },
+    { id: 1003, large_file_url: '' },
+  ];
+  const items = providers.parseBooruPosts(json, 'miku', 'danbooru');
+  assert.equal(items.length, 2);
+  assert.equal(items[0]!.imageUrl, 'https://cdn.donmai.us/sample/a.jpg');
+  assert.equal(items[0]!.title, 'hatsune miku · some artist');
+  assert.equal(items[0]!.url, 'https://danbooru.donmai.us/posts/1001');
+  assert.equal(items[1]!.imageUrl, 'https://cdn.donmai.us/original/b.png');
+  assert.equal(items[1]!.title, 'miku · danbooru'); // 无角色/画师 → 回退查询词
+  assert.equal(items.every((i) => i.provider === 'danbooru'), true);
+});
+
+test('parseBooruPosts：rule34 形状回退 sample_url，无 id 则无详情页 URL', () => {
+  const json = [
+    { id: 7, sample_url: 'https://img.rule34.xxx/samples/x.jpg', file_url: 'https://img.rule34.xxx/images/x.jpg' },
+    { file_url: 'https://img.rule34.xxx/images/y.jpg' },
+  ];
+  const items = providers.parseBooruPosts(json, 'city', 'rule34');
+  assert.equal(items.length, 2);
+  assert.equal(items[0]!.imageUrl, 'https://img.rule34.xxx/samples/x.jpg');
+  assert.equal(items[0]!.url, 'https://rule34.xxx/posts/7');
+  assert.equal(items[1]!.url, undefined);
+  assert.equal(items.every((i) => i.provider === 'rule34'), true);
+});
+
 test('parseXtweets：只保留带媒体的推文，无图的仅回退一条文字', () => {
   const json = {
     data: [
@@ -106,8 +137,10 @@ test('themeToQueries：已知主题返回对应词组，未知主题回退', () 
 });
 
 test('enabledProviders：按白名单过滤（x 需要 token，custom 需要 URL，google 默认关）', () => {
-  const ids = enabledProviders('wikimedia,bing,openverse,x,custom').map((p) => p.id);
+  const ids = enabledProviders('wikimedia,bing,openverse,x,custom,danbooru,rule34').map((p) => p.id);
   assert.ok(ids.includes('wikimedia') && ids.includes('bing') && ids.includes('openverse'));
+  assert.ok(ids.includes('danbooru')); // 无密钥要求，白名单含即启用
+  assert.ok(ids.includes('rule34')); // RULE34_API_KEY/USER_ID 已设置且白名单含 rule34
   assert.ok(ids.includes('x')); // X_BEARER_TOKEN 已设置且白名单含 x
   assert.ok(!ids.includes('custom')); // HOT_IMAGES_URL 未配置
   assert.ok(!ids.includes('google')); // 白名单不含 google → 不启用
@@ -159,6 +192,35 @@ test('aggregateImages：wikimedia fixture 直接可用', async () => {
   assert.equal(res.items.length, 1);
   assert.equal(res.items[0]!.provider, 'wikimedia');
   assert.equal(res.items[0]!.imageUrl, 'https://upload.wikimedia.org/wikipedia/commons/f/f1/m.jpg');
+});
+
+test('danbooru provider：请求携带 rating:s 过滤，解析 posts 数组', async () => {
+  const json = [{ id: 5, large_file_url: 'https://cdn.donmai.us/sample/n.jpg', tag_string_character: 'neon_city' }];
+  const urls: string[] = [];
+  const fetcher = (async (input: unknown) => {
+    const url = String(input);
+    urls.push(url);
+    return new Response(JSON.stringify(json), { headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const res = await aggregateImages('neon', { fetcher }, 'danbooru');
+  assert.equal(res.items.length, 1);
+  assert.equal(res.items[0]!.title, 'neon city');
+  assert.ok(urls[0]!.includes('rating%3As'), '必须携带 SFW 过滤标签（rating:s）');
+  assert.ok(urls[0]!.includes('neon'));
+});
+
+test('rule34 provider：请求携带 rating:safe 过滤，解析 posts 数组', async () => {
+  const json = [{ id: 9, sample_url: 'https://img.rule34.xxx/samples/n.jpg' }];
+  const urls: string[] = [];
+  const fetcher = (async (input: unknown) => {
+    const url = String(input);
+    urls.push(url);
+    return new Response(JSON.stringify(json), { headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const res = await aggregateImages('neon', { fetcher }, 'rule34');
+  assert.equal(res.items.length, 1);
+  assert.ok(urls[0]!.includes('rating%3Asafe'), '必须携带 SFW 过滤标签（rating:safe）');
+  assert.ok(urls[0]!.includes('json=1'));
 });
 
 test('x provider 已启用且能解析带媒体推文', async () => {

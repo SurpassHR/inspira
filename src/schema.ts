@@ -27,7 +27,7 @@ export const settingsSchema = z.object({
 export type SettingsInput = z.infer<typeof settingsSchema>;
 
 export const scrapeConfigSchema = z.object({
-  providers: z.array(z.enum(['wikimedia', 'bing', 'openverse', 'google', 'custom', 'x'])).min(1),
+  providers: z.array(z.enum(['wikimedia', 'bing', 'openverse', 'danbooru', 'rule34', 'google', 'custom', 'x'])).min(1),
   hotTopicsUrl: z.string().url().optional().or(z.literal('').transform(() => undefined)),
   hotImagesUrl: z.string().url().optional().or(z.literal('').transform(() => undefined)),
   timeoutMs: z.number().int().min(1000).max(60000).optional(),

@@ -2,7 +2,7 @@ import { config } from '../config.js';
 import { describeError } from '../errors.js';
 import { getScrapeConfig } from './scrape-config.js';
 import {
-  bingProvider, customJsonProvider, googleProvider, openverseProvider, wikimediaProvider, xProvider,
+  bingProvider, customJsonProvider, danbooruProvider, googleProvider, openverseProvider, rule34Provider, wikimediaProvider, xProvider,
   type AggregatedImage, type ImageProvider, type ProviderCtx,
 } from './providers.js';
 
@@ -10,6 +10,8 @@ export const allProviders: ImageProvider[] = [
   wikimediaProvider,
   bingProvider,
   openverseProvider,
+  danbooruProvider,
+  rule34Provider,
   googleProvider,
   customJsonProvider,
   xProvider,

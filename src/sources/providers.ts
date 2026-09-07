@@ -285,6 +285,62 @@ export const xProvider: ImageProvider = {
   },
 };
 
+/* ---------------- Danbooru / Rule34（Danbooru 兼容 API，仅抓取 SFW 内容） ---------------- */
+
+/**
+ * Danbooru / Rule34 的 posts 数组字段一致（id/file_url/large_file_url/sample_url/…）。
+ * 只接受带有图 URL 的条目；标题取角色/画师标签（下划线转空格），无则回退查询词。
+ */
+export function parseBooruPosts(json: unknown, query: string, providerId: 'danbooru' | 'rule34'): AggregatedImage[] {
+  const posts = Array.isArray(json) ? json as {
+    id?: number;
+    file_url?: string;
+    large_file_url?: string;
+    sample_url?: string;
+    tag_string_character?: string;
+    tag_string_artist?: string;
+  }[] : [];
+  const domain = providerId === 'rule34' ? 'rule34.xxx' : 'danbooru.donmai.us';
+  const out: AggregatedImage[] = [];
+  for (const p of posts) {
+    const imageUrl = p.large_file_url ?? p.sample_url ?? p.file_url;
+    if (!imageUrl || !isHttpUrl(imageUrl)) continue;
+    const who = [p.tag_string_character, p.tag_string_artist].filter(Boolean).join(' · ').replace(/_/g, ' ').trim();
+    out.push({
+      title: who || `${query} · ${providerId}`,
+      imageUrl,
+      url: p.id ? `https://${domain}/posts/${p.id}` : undefined,
+      provider: providerId,
+    });
+  }
+  return out;
+}
+
+export const danbooruProvider: ImageProvider = {
+  id: 'danbooru',
+  label: 'Danbooru（仅 SFW）',
+  isEnabled: () => isProviderEnabled('danbooru'),
+  async fetchImages(query, ctx) {
+    // rating:s 元标签硬过滤：只返回 safe 级内容
+    const url = `https://danbooru.donmai.us/posts.json?limit=15&tags=${encodeURIComponent(`${query} rating:s`)}`;
+    const text = await getText(ctx, url, { accept: 'application/json' });
+    return parseBooruPosts(JSON.parse(text), query, 'danbooru');
+  },
+};
+
+export const rule34Provider: ImageProvider = {
+  id: 'rule34',
+  label: 'Rule34（仅 SFW）',
+  // 官方 API 自 2025 年起强制鉴权（免费注册获取 user_id + api_key），两者齐备才启用
+  isEnabled: () => Boolean(config.RULE34_API_KEY && config.RULE34_USER_ID) && isProviderEnabled('rule34'),
+  async fetchImages(query, ctx) {
+    // rating:safe 元标签硬过滤：该站默认是 NSFW 图库，此处只取 safe 级内容
+    const url = `https://api.rule34.xxx/index.php?page=dapi&s=post&q=index&limit=15&json=1&api_key=${encodeURIComponent(config.RULE34_API_KEY)}&user_id=${encodeURIComponent(config.RULE34_USER_ID)}&tags=${encodeURIComponent(`${query} rating:safe`)}`;
+    const text = await getText(ctx, url, { accept: 'application/json' });
+    return parseBooruPosts(JSON.parse(text), query, 'rule34');
+  },
+};
+
 /* ---------------- 自定义 JSON 源（HOT_IMAGES_URL，原热图契约：{imageUrl,title?,url?}） ---------------- */
 
 export const customJsonProvider: ImageProvider = {

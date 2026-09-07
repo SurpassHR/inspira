@@ -91,14 +91,19 @@ export const OVERRIDE_PLACEHOLDERS = ['theme', 'style', 'aspect', 'title', 'idea
 /**
  * 渲染 override 模板：把 {theme}/{style}/{aspect}/{title}/{idea} 依次替换为本次生成的实际值。
  * 风格未选中/标题缺省时为 undefined → 替换为空串；未出现的占位符保持原样（留给用户自定义）。
+ * 模板**未显式引用 {idea}** 时，自动把本次点子追加到末尾（保证画面随灵感变化）；
+ * 显式写了 {idea} 则完全按模板（显式优先）。
  */
 export function renderOverrideTemplate(tpl: string, vars: { theme: string; style?: string; aspect?: string; title?: string; idea: string }): string {
-  return tpl
+  const explicitIdea = tpl.includes('{idea}');
+  let out = tpl
     .replace(/\{theme\}/g, vars.theme)
     .replace(/\{style\}/g, vars.style ?? '')
     .replace(/\{aspect\}/g, vars.aspect ?? '')
     .replace(/\{title\}/g, vars.title ?? '')
     .replace(/\{idea\}/g, vars.idea);
+  if (!explicitIdea && vars.idea.trim()) out += '\n' + vars.idea.trim();
+  return out;
 }
 
 /**
