@@ -156,12 +156,20 @@ h2,h3{margin:0}
 .secret .txtbox{padding-right:36px}
 .seye{position:absolute;right:5px;top:50%;transform:translateY(-50%);background:transparent;color:var(--faint);font-size:13px;padding:3px 5px;border-radius:6px;line-height:1}
 .seye:hover{color:var(--acc);background:var(--card2)}
-.mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:300px;overflow-y:auto;align-content:start;padding-right:2px}
+.modal .mgrid{max-height:360px}
 .mcard{display:flex;align-items:center;gap:7px;background:#0d0d0d;border:1px solid rgba(167,139,250,.45);border-radius:8px;padding:6px 9px;cursor:pointer;user-select:none;min-width:0;transition:.15s}
 .mcard:hover{border-color:var(--acc);background:rgba(139,92,246,.12)}
 .mcard .mk{width:14px;height:14px;flex:none;border-radius:4px;background:var(--acc-deep);color:#fff;font-size:9.5px;display:flex;align-items:center;justify-content:center;line-height:1}
 .mcard .mname{font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#d4d4d8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mempty{border:1px dashed var(--bd-2);border-radius:10px;padding:18px 14px;text-align:center;color:var(--faint);font-size:12px;line-height:1.7}
+.mtool{display:flex;align-items:center;gap:8px;margin:2px 0 10px}
+.tsearch{flex:1;min-width:0;min-height:30px;padding:4px 10px;font-size:12.5px}
+.mcount{font-size:11.5px;color:var(--faint);font-weight:500}
+.mcard.off{border-color:var(--bd-2);background:transparent}
+.mcard.off:hover{border-color:#52525b;background:var(--card2)}
+.mcard.off .mk{background:transparent;border:1px solid var(--bd-2);color:transparent;box-shadow:none}
+.mcard.off .mname{color:var(--faint)}
 .cselect{position:relative;user-select:none}
 .cs-btn{display:flex;align-items:center;gap:8px;width:100%;background:#0d0d0d;border:1px solid var(--bd-2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--fg);text-align:left;font-weight:400}
 .cselect.open .cs-btn{border-color:rgba(167,139,250,.6);box-shadow:0 0 0 2px rgba(139,92,246,.18)}

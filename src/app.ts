@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { coverRetryCandidates, resetCoverRetryState, retryFailedCovers } from './cover-retry.js';
 import { dashboardHtml } from './dashboard.js';
 import { attachLiveReload, devBadgeHtml, liveReloadScript } from './livereload.js';
 import { describeError } from './errors.js';
@@ -434,6 +435,15 @@ app.post('/api/generate', async (c) => {
   const item = await runOnce();
   if (!item) return c.json({ error: '正在生成中或自动生成未启用' }, 409);
   return c.json({ id: item.id, status: item.status }, 202);
+});
+
+/** 手动补齐失败封面：忽略退避立即重试全部候选，返回本轮尝试/恢复条数与剩余失败数（admin） */
+app.post('/api/covers/retry', async (c) => {
+  const u = adminOf(c);
+  if (!u) return userOf(c) ? forbidden(c) : unauthorized(c);
+  resetCoverRetryState();
+  const r = await retryFailedCovers({ force: true });
+  return c.json({ retried: r.retried, recovered: r.recovered, remaining: coverRetryCandidates().length });
 });
 
 app.delete('/api/inspirations', async (c) => {

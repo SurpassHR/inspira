@@ -31,7 +31,7 @@ npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SS
 后台左侧导航「LLM 配置」打开 master-detail 面板（admin），**增 / 删 / 改**多个 LLM 提供商，无需再改环境变量：
 
 - **协议类型**：OpenAI / Anthropic / Gemini / OpenAI 兼容（自定义 Base URL）。生成链路统一走各协议的 **OpenAI 兼容 Chat Completions 入口**（Anthropic、Gemini 由服务端映射到各自的兼容端点），前两种可直接填官方密钥。
-- **模型列表**：「获取模型列表」从提供商拉取（合并保留手动添加项），也可手动输入模型 ID；卡片点击取消勾选即移除。
+- **模型列表**：「获取模型列表」先弹出「挑选模型」弹窗（搜索 / 全选·清空 / 计数），确认后勾选的模型才加入列表（少量默认全选、大批量默认不选，避免一次暴露几百个模型）；已启用模型为卡片可单个移除，模型较多时上方出现筛选框与「移除匹配的 N 个」批量调整；也可手动输入模型 ID 回车添加。
 - **任务级模型分配**（面板侧栏「⚖ 模型分配」）：可为 **创意点子 / 图像提示词（Krea 规范，含视频参考画面生图提示词）/ 视频提示词（MiniMax H3 规范）/ 生图（图像灵感封面）** 四类任务分别指定不同的「提供商 · 模型」；前三类留空（自动）时使用第一个可用提供商的第一个模型。删除提供商或移除模型后，对应分配自动失效回退为自动；控制台状态行会显示各任务实际生效的模型。
 - **密钥脱敏**：API 永远不回传明文密钥（保留前 3 后 4 掩码显示）；编辑时回传掩码表示「未修改密钥」，服务端保留原值。密钥不进入任何日志与错误消息。
 - **生效规则**：生成时按「任务分配 → 第一个可用提供商（有密钥 + 有模型）→ 环境变量」的顺序解析；未配置任何一方时手动生成会给出明确错误，自动调度保持关闭。提供商增删改会即时重排调度判定。
@@ -66,6 +66,7 @@ npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SS
 - **调用约定**：优先走 OpenAI 兼容 `POST {base}/images/generations`（body 仅 `model` / `prompt` / `n:1`），响应兼容 `b64_json` 与 `url`（含 `data:` URL）；失败（除 401 外）**自动降级 chat completions** 并从回复提取图片（`message.images` / data URI / markdown 图 / 裸 URL）——部分中转把 `gemini-*-image` 类模型只绑定在对话端点。两路都失败时错误信息会合并透出中转的错误响应体摘要（如 `auth_unavailable`），便于定位渠道问题。OpenAI / Gemini 协议自动映射到各自的兼容端点，Anthropic 无图像接口、分配后会明确报错。
 - **产物与展示**：图片保存为 `DATA_DIR/images/{灵感 id}.{png|jpg|webp|gif}`（按魔数识别格式），经 `GET /api/images/:name` 提供给卡片封面（长缓存）。灵感记录中新增 `cover` 字段；历史记录不会补生图。
 - **失败与清理**：生图超时默认 180s（`LLM_IMAGE_TIMEOUT_MS` 可调），失败只记 `coverError`（卡片占位图悬停可见原因），不影响 status=ready 的提示词；灵感被清空/淘汰后封面文件随孤儿清理自动删除。
+- **失败自动重试**：生图失败的条目（有 `coverError` 且无 `cover`）会被自动补生图——独立定时器每 `COVER_RETRY_INTERVAL_MINUTES` 分钟检查一次，按指数退避（5min → 10min → 20min… 上限 1h）重试，单条最多 `COVER_RETRY_MAX_ATTEMPTS` 次（`0`=不限）。成功后写回封面并清除 `coverError`。修正生图配置（提供商/模型分配/设置保存）会立即触发一轮补图；也可 `POST /api/covers/retry`（admin）手动强制重试。重试进度仅存内存，服务重启后重新计数。生成时未启用生图（无 `coverError` 的缺封面条目）不属于失败，不会被补图。
 
 ## 环境变量
 
@@ -77,6 +78,8 @@ npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SS
 | `LLM_MODEL` | `gpt-4o-mini` | 模型名（无提供商配置时的兜底） |
 | `LLM_TIMEOUT_MS` | `60000` | 单次请求超时（自动重试一次） |
 | `LLM_IMAGE_TIMEOUT_MS` | `180000` | 生图（images/generations）单次请求超时（耗时明显高于对话，单独放宽） |
+| `COVER_RETRY_INTERVAL_MINUTES` | `5` | 封面生图失败自动重试的检查间隔（分钟），同时是指数退避的基准单位（5→10→20…上限 1h） |
+| `COVER_RETRY_MAX_ATTEMPTS` | `6` | 封面自动重试的单条最大尝试次数，`0`=不限；达上限后不再自动重试，修正配置或 `POST /api/covers/retry` 可重来 |
 | `LLM_TEMPERATURE` | `0.9` | 采样温度 |
 | `LLM_MAX_TOKENS` | `2000` | 输出上限 |
 | `HOT_TOPICS_URL` | 内置 GitHub 热门 | JSON 数组 `{title, summary?, url?}`，兼容 `{items:[...]}` / `{data:[...]}`；内置源动态计算 `created:>近7天` 的 ISO 日期（GitHub 不接受 `7days` 这类相对天数） |

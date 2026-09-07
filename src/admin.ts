@@ -383,13 +383,18 @@ body{overflow:hidden}
                 </div>
                 <div class="sep" style="display:flex;align-items:center;gap:10px">
                   <span>模型列表</span>
+                  <span class="mcount" id="modelCount"></span>
                   <span style="flex:1"></span>
                   <button class="btn ghost sm" id="fetchModels" type="button">获取模型列表</button>
+                </div>
+                <div class="mtool" id="modelTools" style="display:none">
+                  <div class="txtbox tsearch" id="modelSearch" contenteditable="true" role="textbox" data-placeholder="筛选模型…" aria-label="筛选模型"></div>
+                  <button class="btn ghost sm danger" id="modelRemoveSel" type="button" style="display:none"></button>
                 </div>
                 <div id="modelEmpty" class="mempty"></div>
                 <div id="modelGrid" class="mgrid" style="display:none"></div>
                 <div class="txtbox tnew" id="modelNew" contenteditable="true" role="textbox" data-placeholder="手动添加模型 ID，回车添加…" aria-label="手动添加模型"></div>
-                <div class="cb-hint">点击模型卡片取消勾选并移除 · 未分配任务的生成使用列表中第一个可用提供商的第一个模型</div>
+                <div class="cb-hint">点击模型卡片取消勾选并移除 · 多模型时上方可按关键字筛选并「移除匹配」批量调整 · 未分配任务的生成使用列表中第一个可用提供商的第一个模型</div>
               </div>
               <div class="lform" id="assignForm" style="display:none">
                 <div class="cb-hint" style="font-size:11.5px;color:var(--muted);margin:0 0 14px">为不同生成任务指定不同的「提供商 · 模型」；留空（自动）时使用提供商列表中第一个可用提供商的第一个模型。</div>
@@ -556,6 +561,27 @@ body{overflow:hidden}
       <span class="grow"></span>
       <button class="btn ghost" id="pwCancel" type="button">取消</button>
       <button class="btn" id="pwSave" type="button">更新密码</button>
+    </div>
+  </div>
+</div>
+
+<!-- 挑选模型弹窗（拉取后先挑选再添加） -->
+<div class="overlay" id="mfetch">
+  <div class="modal wide">
+    <div class="mhead"><h2>选择要添加的模型</h2><button class="x" id="mfclose" type="button" aria-label="关闭">✕</button></div>
+    <div class="mtool">
+      <div class="txtbox tsearch" id="mfSearch" contenteditable="true" role="textbox" data-placeholder="筛选模型…" aria-label="筛选模型"></div>
+      <button class="btn ghost sm" id="mfAll" type="button">全选</button>
+      <button class="btn ghost sm" id="mfNone" type="button">清空</button>
+    </div>
+    <div class="cb-hint" id="mfCount" style="margin:0 0 8px"></div>
+    <div id="mfList" class="mgrid"></div>
+    <div class="mempty" id="mfEmpty" style="display:none"></div>
+    <div class="mfoot">
+      <span class="pw" id="mfHint">勾选需要加入列表的模型，确认后才会合并</span>
+      <span class="grow"></span>
+      <button class="btn ghost" id="mfCancel" type="button">取消</button>
+      <button class="btn" id="mfAdd" type="button">添加所选</button>
     </div>
   </div>
 </div>
@@ -789,13 +815,13 @@ $('#pwSave').addEventListener('click',async()=>{
 function closeModal(id){$(id).classList.remove('show');}
 $('#pwclose').onclick=()=>closeModal('#pwmodal');
 $('#pwCancel').onclick=()=>closeModal('#pwmodal');
-['#pwmodal','#dmodal','#umodal'].forEach(id=>{
+['#pwmodal','#dmodal','#umodal','#mfetch'].forEach(id=>{
   $(id).addEventListener('click',e=>{if(e.target===$(id))closeModal(id);});
 });
 document.addEventListener('keydown',e=>{
   if(e.key!=='Escape')return;
   if(SELECTS.some(s=>s.isOpen()))return; // Esc 只关下拉，不关面板
-  ['#pwmodal','#dmodal','#umodal'].forEach(id=>{if($(id).classList.contains('show'))closeModal(id);});
+  ['#pwmodal','#dmodal','#umodal','#mfetch'].forEach(id=>{if($(id).classList.contains('show'))closeModal(id);});
 });
 
 /* ===== 总览 ===== */
@@ -1266,6 +1292,9 @@ const pIdV=makeTextField($('#pId'),{placeholder:'例如：my-openai',maxlength:6
 const pNameV=makeTextField($('#pName'),{placeholder:'例如：GPT-4o',maxlength:60,onInput:renderBar});
 const pBaseUrlV=makeTextField($('#pBaseUrl'),{placeholder:'https://api.openai.com/v1',onInput:renderBar});
 const modelNewV=makeTextField($('#modelNew'),{placeholder:'手动添加模型 ID，回车添加…',maxlength:200});
+const MODEL_TOOLS_MIN=12; // 模型数超过该值才显示筛选工具行
+let modelQ='';
+const modelSearchV=makeTextField($('#modelSearch'),{placeholder:'筛选模型…',onInput:()=>{modelQ=modelSearchV.get();renderModels();}});
 let keyReal='',showKey=false;
 const keyDisc=(window.CSS&&CSS.supports&&CSS.supports('-webkit-text-security','disc'));
 const pKeyEl=$('#pKey');
@@ -1355,6 +1384,7 @@ function selectProvider(id){
   llmSelected=id;llmIsNew=false;showKey=false;
   $('#keyEye').textContent='👁';$('#keyEye').setAttribute('aria-pressed','false');
   editing={kind:n.kind,models:n.models.slice()};
+  modelQ='';modelSearchV.set('');
   pIdV.set(n.id);pNameV.set(n.name);setKey(n.apiKey);pBaseUrlV.set(n.baseUrl);
   $('#pId').removeAttribute('contenteditable');$('#pId').classList.add('ro');
   $('#pIdHint').textContent='ID 创建后不可修改';
@@ -1366,6 +1396,7 @@ function startNew(){
   llmSelected=null;llmIsNew=true;showKey=false;
   $('#keyEye').textContent='👁';$('#keyEye').setAttribute('aria-pressed','false');
   editing={kind:'openai',models:[]};
+  modelQ='';modelSearchV.set('');
   pIdV.set('');pNameV.set('');setKey('');pBaseUrlV.set('');
   $('#pId').setAttribute('contenteditable','true');$('#pId').classList.remove('ro');
   $('#pIdHint').textContent='创建后不可修改 · 仅限字母/数字/连字符/下划线';
@@ -1375,27 +1406,49 @@ function startNew(){
   $('#pId').focus();
 }
 function renderModels(){
-  const grid=$('#modelGrid'),empty=$('#modelEmpty');
-  if(!editing.models.length){
+  const grid=$('#modelGrid'),empty=$('#modelEmpty'),tools=$('#modelTools'),count=$('#modelCount'),rm=$('#modelRemoveSel');
+  const total=editing.models.length;
+  const q=modelQ.trim().toLowerCase();
+  const shown=q?editing.models.filter(m=>m.toLowerCase().indexOf(q)>=0):editing.models;
+  // 计数 + 工具行可见性：模型较多（或正在筛选）时显示
+  count.textContent=total?(q?('共 '+total+' 个 · 匹配 '+shown.length):'共 '+total+' 个'):'';
+  const showTools=total>MODEL_TOOLS_MIN||q!=='';
+  tools.style.display=(total&&showTools)?'':'none';
+  if(!total){
     grid.style.display='none';grid.innerHTML='';empty.style.display='';
     empty.textContent=(editing.kind==='openai_compat'&&!pBaseUrlV.get().trim())?'请先填写 Base URL 和 API Key'
       :(!keyReal.trim()||isMaskedKey(keyReal))?'请先填写有效的 API Key'
       :'点击「获取模型列表」从提供商拉取，或在下方手动输入模型 ID';
+    rm.style.display='none';
     return;
   }
-  empty.style.display='none';grid.style.display='';
-  grid.innerHTML=editing.models.map((m,i)=>
-    '<span class="mcard" role="checkbox" aria-checked="true" tabindex="0" data-i="'+i+'" title="取消勾选并移除 '+esc(m)+'">'+
+  empty.style.display='none';
+  if(!shown.length){
+    grid.style.display='none';grid.innerHTML='';empty.style.display='';
+    empty.textContent='没有匹配「'+esc(modelQ.trim())+'」的模型，可修改筛选词后重试';
+    rm.style.display='none';
+    return;
+  }
+  grid.style.display='';rm.style.display=q?'':'none';
+  if(q)rm.textContent='移除匹配的 '+shown.length+' 个';
+  grid.innerHTML=shown.map(m=>
+    '<span class="mcard" role="checkbox" aria-checked="true" tabindex="0" data-m="'+esc(m)+'" title="取消勾选并移除 '+esc(m)+'">'+
     '<span class="mk">✓</span><span class="mname">'+esc(m)+'</span></span>').join('');
 }
-function toggleModelAt(i){
-  const m=editing.models[i];if(m===undefined)return;
-  editing.models.splice(i,1);
+function removeModels(list){
+  if(!list.length)return;
+  for(const m of list){const i=editing.models.indexOf(m);if(i>=0)editing.models.splice(i,1);}
+  if(!editing.models.length){modelQ='';modelSearchV.set('');}
   renderModels();renderBar();
 }
-$('#modelGrid').addEventListener('click',e=>{const c=e.target.closest('.mcard');if(c)toggleModelAt(+c.dataset.i);});
+$('#modelGrid').addEventListener('click',e=>{const c=e.target.closest('.mcard');if(c)removeModels([c.dataset.m]);});
 $('#modelGrid').addEventListener('keydown',e=>{const c=e.target.closest('.mcard');
-  if(c&&(e.key===' '||e.key==='Enter')){e.preventDefault();toggleModelAt(+c.dataset.i);}});
+  if(c&&(e.key===' '||e.key==='Enter')){e.preventDefault();removeModels([c.dataset.m]);}});
+$('#modelRemoveSel').addEventListener('click',()=>{
+  const q=modelQ.trim().toLowerCase();if(!q)return;
+  const doomed=editing.models.filter(m=>m.toLowerCase().indexOf(q)>=0);
+  if(doomed.length)removeModels(doomed);
+});
 $('#modelNew').addEventListener('keydown',e=>{
   if(e.key!=='Enter')return;e.preventDefault();
   const v=modelNewV.get();if(!v)return;
@@ -1404,6 +1457,50 @@ $('#modelNew').addEventListener('keydown',e=>{
 });
 function renderFetchBtn(){$('#fetchModels').disabled=llmFetching;
   $('#fetchModels').innerHTML=llmFetching?'<span class="spin">◌</span> 获取中…':'获取模型列表';}
+/* ---- 拉取后的「挑选模型」弹窗 ---- */
+let pickAll=[],pickSel=[],pickQ='';
+function pickShown(){const q=pickQ.trim().toLowerCase();return q?pickAll.filter(m=>m.toLowerCase().indexOf(q)>=0):pickAll;}
+function renderPick(){
+  const shown=pickShown(),listEl=$('#mfList');
+  $('#mfCount').textContent='已选 '+pickSel.length+' · 共 '+pickAll.length+(pickQ.trim()?(' · 匹配 '+shown.length):'');
+  $('#mfEmpty').style.display=shown.length?'none':'';
+  $('#mfEmpty').textContent=pickAll.length?(pickQ.trim()?('没有匹配「'+esc(pickQ.trim())+'」的模型'):''):'没有可添加的模型';
+  listEl.style.display=shown.length?'':'none';
+  listEl.innerHTML=shown.map(m=>{
+    const on=pickSel.indexOf(m)>=0;
+    return '<span class="mcard'+(on?'':' off')+'" role="checkbox" aria-checked="'+on+'" tabindex="0" data-m="'+esc(m)+'" title="'+(on?'取消勾选':'勾选')+' '+esc(m)+'">'+
+    '<span class="mk">'+(on?'✓':'')+'</span><span class="mname">'+esc(m)+'</span></span>';}).join('');
+  const addBtn=$('#mfAdd');addBtn.disabled=!pickSel.length;
+  addBtn.textContent=pickSel.length?('添加所选 ('+pickSel.length+')'):'添加所选';
+}
+function togglePick(m){const i=pickSel.indexOf(m);if(i>=0)pickSel.splice(i,1);else pickSel.push(m);renderPick();}
+$('#mfList').addEventListener('click',e=>{const c=e.target.closest('.mcard');if(c)togglePick(c.dataset.m);});
+$('#mfList').addEventListener('keydown',e=>{const c=e.target.closest('.mcard');
+  if(c&&(e.key===' '||e.key==='Enter')){e.preventDefault();togglePick(c.dataset.m);}});
+$('#mfAll').addEventListener('click',()=>{for(const m of pickShown())if(pickSel.indexOf(m)<0)pickSel.push(m);renderPick();});
+$('#mfNone').addEventListener('click',()=>{const s=new Set(pickShown());pickSel=pickSel.filter(m=>!s.has(m));renderPick();});
+const mfSearchV=makeTextField($('#mfSearch'),{placeholder:'筛选模型…',onInput:()=>{pickQ=mfSearchV.get();renderPick();}});
+function openMfetch(list){
+  // 少量新模型默认全勾（贴近旧行为）；大批量默认不勾选，便于只挑需要的模型
+  pickAll=list.slice();pickSel=(list.length<=MODEL_TOOLS_MIN)?list.slice():[];
+  pickQ='';mfSearchV.set('');
+  $('#mfEmpty').textContent='没有匹配的模型';
+  $('#mfHint').textContent=(list.length>MODEL_TOOLS_MIN&&!pickSel.length)?
+    '拉取到 '+list.length+' 个模型，默认未勾选：请筛选后「全选」或逐个勾选需要加入列表的模型'
+    :'勾选需要加入列表的模型，确认后才会合并';
+  renderPick();
+  $('#mfetch').classList.add('show');
+}
+$('#mfAdd').addEventListener('click',()=>{
+  if(!pickSel.length)return;
+  const fresh=pickSel.filter(m=>editing.models.indexOf(m)<0);
+  if(fresh.length)editing.models=editing.models.concat(fresh);
+  $('#mfetch').classList.remove('show');
+  renderModels();renderBar();
+  toast('已添加 '+fresh.length+' 个模型');
+});
+$('#mfCancel').addEventListener('click',()=>$('#mfetch').classList.remove('show'));
+$('#mfclose').addEventListener('click',()=>$('#mfetch').classList.remove('show'));
 $('#fetchModels').addEventListener('click',async()=>{
   if(llmFetching)return;
   const kind=editing.kind,baseUrl=pBaseUrlV.get().trim(),key=keyReal.trim();
@@ -1416,9 +1513,8 @@ $('#fetchModels').addEventListener('click',async()=>{
     const data=await r.json().catch(()=>({}));
     if(!r.ok){toast(data.error||('获取失败（HTTP '+r.status+'）'),false);return;}
     const fresh=(data.models||[]).filter(m=>!editing.models.includes(m));
-    editing.models=editing.models.concat(fresh);
-    renderModels();renderBar();
-    toast(fresh.length?('已获取 '+fresh.length+' 个新模型'):'没有发现新模型，已保留现有列表');
+    if(!fresh.length){toast('没有发现新模型，已保留现有列表');return;}
+    openMfetch(fresh);
   }catch(e){toast('获取模型列表失败：网络错误',false);}
   finally{llmFetching=false;renderFetchBtn();}
 });

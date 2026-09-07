@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { resetCoverRetryState, retryFailedCovers } from './cover-retry.js';
 import { createSeed, generateInspiration } from './generator.js';
 import { pruneOrphanImages } from './images.js';
 import { llmReady } from './llm.js';
@@ -27,6 +28,10 @@ export async function pruneFailedRecords(): Promise<number> {
 
 export function restartScheduler(): void {
   void pruneFailedRecords();
+  // 提供商/分配/设置变更后立即补一轮失败封面（清退避进度，修正配置即刻生效）；
+  // 未分配「生图」模型时该轮会静默跳过，与自动生成开关无关
+  resetCoverRetryState();
+  void retryFailedCovers();
   if (timer) { clearTimeout(timer); timer = undefined; }
   nextRunAt = null;
   const settings = store.getSettings();

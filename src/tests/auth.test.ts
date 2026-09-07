@@ -162,6 +162,7 @@ test('viewer：管理 GET 可读、写操作一律 403、提供商列表不含�
     ['POST', '/api/llm/fetch-models', { kind: 'openai', apiKey: 'k' }],
     ['PUT', '/api/llm/assignments', {}],
     ['POST', '/api/generate', null],
+    ['POST', '/api/covers/retry', null],
     ['DELETE', '/api/inspirations', null],
     ['DELETE', '/api/inspirations/whatever', null],
   ] as const) {
@@ -169,6 +170,11 @@ test('viewer：管理 GET 可读、写操作一律 403、提供商列表不含�
     assert.equal(res.status, 403, `${method} ${url} viewer 应被拒绝`);
   }
   assert.equal((await app.request('/api/admin/users', { headers: V })).status, 403);
+
+  // admin 可触发封面补生图（无候选时全零计数）
+  const retry = await app.request('/api/covers/retry', { method: 'POST', headers: H });
+  assert.equal(retry.status, 200);
+  assert.deepEqual(await retry.json(), { retried: 0, recovered: 0, remaining: 0 });
 
   // viewer 拿到的提供商 apiKey 为空字符串；admin 是脱敏掩码
   const asAdmin = await (await app.request('/api/llm/providers', { headers: H })).json() as { apiKey: string }[];

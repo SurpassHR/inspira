@@ -18,6 +18,9 @@ const schema = z.object({
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   // 生图（images/generations）耗时明显高于对话，单独放宽超时
   LLM_IMAGE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
+  // 封面生图失败自动重试：检查间隔（分钟，同时是指数退避的基准单位）与单条最大尝试次数（0=不限）
+  COVER_RETRY_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
+  COVER_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(0).default(6),
   LLM_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.9),
   LLM_MAX_TOKENS: z.coerce.number().int().positive().default(2000),
 
