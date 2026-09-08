@@ -16,7 +16,7 @@ process.env.LLM_IMAGE_CHAT_TIMEOUT_MS = '3000';
 
 const llmcfg = await import('../llm-config.js');
 const { ImageGenNotConfiguredError, generateImage, resolveLlmTarget, sniffImageExt } = await import('../llm.js');
-const { generateAndSaveImage, pruneOrphanImages, readInspirationImage } = await import('../images.js');
+const { generateAndSaveImage, pruneOrphanImages, readCoverThumb, readInspirationImage } = await import('../images.js');
 
 /** 1x1 PNG（魔数 \x89PNG）与 JPEG 魔数字节，用于校验 b64 解码与扩展名嗅探 */
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -462,18 +462,70 @@ test('generateAndSaveImage：落盘 DATA_DIR/images/{id}.{ext}，readInspiration
   }
 });
 
-test('pruneOrphanImages：只删除 inspiration id 已不存在的封面文件', async () => {
+test('readCoverThumb：generateAndSaveImage 后自动生成压缩缩略图，删除后懒生成，无原图返回 undefined', async () => {
+  const h = await startServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }));
+  });
+  try {
+    await llmcfg.saveLlmProvider({ id: 'ig', name: '生图中转', kind: 'openai_compat', apiKey: 'sk-imagegen-key', baseUrl: `http://127.0.0.1:${h.port}/v1`, models: ['img-model'] });
+    await assignImageGen('ig', 'img-model');
+    const id = 'thumb-test-1';
+    await generateAndSaveImage('prompt', id);
+    // 保存封面时顺带生成了 JPEG 缩略图（魔数 ffd8）
+    const thumb = await readCoverThumb(`${id}.thumb.jpg`);
+    assert.ok(thumb);
+    assert.equal(thumb.contentType, 'image/jpeg');
+    assert.equal(thumb.bytes[0], 0xff);
+    assert.equal(thumb.bytes[1], 0xd8);
+    // 已落盘；再读走磁盘缓存
+    const { readFile: rf, unlink: ul, readdir } = await import('node:fs/promises');
+    const onDisk = await rf(join(process.env.DATA_DIR!, 'images', `${id}.thumb.jpg`));
+    assert.equal(Buffer.compare(onDisk, thumb.bytes), 0);
+    // 删除缩略图后再次请求 → 懒生成重建
+    await ul(join(process.env.DATA_DIR!, 'images', `${id}.thumb.jpg`));
+    const again = await readCoverThumb(`${id}.thumb.jpg`);
+    assert.ok(again);
+    assert.equal(again.contentType, 'image/jpeg');
+    assert.ok((await readdir(join(process.env.DATA_DIR!, 'images'))).includes(`${id}.thumb.jpg`));
+    // 非法名 / 无原图 → undefined
+    assert.equal(await readCoverThumb('nope.thumb.jpg'), undefined);
+    assert.equal(await readCoverThumb('..%2F..%2Fx.thumb.jpg'), undefined);
+  } finally {
+    h.server.close();
+    await assignImageGen(null);
+    for (const p of llmcfg.getLlmProviders()) await llmcfg.deleteLlmProvider(p.id);
+    await pruneOrphanImages([]);
+  }
+});
+
+test('readCoverThumb：原图无法解码时回退原图（不阻断展示）', async () => {
+  const dir = join(process.env.DATA_DIR!, 'images');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'garbage.png'), Buffer.from('not a real image at all'));
+  const thumb = await readCoverThumb('garbage.thumb.jpg');
+  assert.ok(thumb);
+  assert.equal(thumb.contentType, 'image/png'); // 解码失败 → 原图直接当缩略图用
+  assert.equal(thumb.bytes.toString(), 'not a real image at all');
+  await pruneOrphanImages([]);
+});
+
+test('pruneOrphanImages：缩略图跟随原图保留/删除，只清理 inspiration id 已不存在的文件', async () => {
   const dir = join(process.env.DATA_DIR!, 'images');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'keep-id.png'), Buffer.from(PNG_B64, 'base64'));
+  await writeFile(join(dir, 'keep-id.thumb.jpg'), Buffer.from('thumb'));
   await writeFile(join(dir, 'orphan-id.png'), Buffer.from(PNG_B64, 'base64'));
+  await writeFile(join(dir, 'orphan-id.thumb.jpg'), Buffer.from('thumb'));
   await writeFile(join(dir, 'untracked.txt'), Buffer.from('非约定命名，不应被清理模块触碰'));
   const removed = await pruneOrphanImages(['keep-id']);
-  assert.equal(removed, 1);
+  assert.equal(removed, 2); // 孤儿原图 + 它的缩略图
   const { readdir } = await import('node:fs/promises');
   const names = await readdir(dir);
   assert.ok(names.includes('keep-id.png'));
+  assert.ok(names.includes('keep-id.thumb.jpg')); // 缩略图不因“非 keep stem”被误删
   assert.ok(!names.includes('orphan-id.png'));
+  assert.ok(!names.includes('orphan-id.thumb.jpg'));
   assert.ok(names.includes('untracked.txt'));
   await pruneOrphanImages([]); // 收尾清理
 });

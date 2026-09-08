@@ -183,6 +183,8 @@ document.addEventListener('keydown',e=>{
 });
 
 /* ===== 卡片 DOM 工厂 ===== */
+/* 卡片展示压缩缩略图（{id}.thumb.jpg），点击灯箱才加载原图 */
+function thumbUrl(f){return f.replace(/\.(png|jpe?g|webp|gif)$/i,'.thumb.jpg');}
 function coverHtml(i){
   const k=KIND[i.kind]||KIND.image;
   const ribbon='<span class="ribbon"><b>'+esc(k.n)+'</b><b>'+esc(SRC[i.source]||i.source)+'</b></span>';
@@ -192,7 +194,7 @@ function coverHtml(i){
     return '<div class="cover video">'+ribbon+'<span class="dur">6 秒</span><div class="ph"><span class="ic"><img src="data:image/svg+xml;utf8,'+encodeURIComponent(play)+'"></span><span class="t">视频提示词</span><span class="s">接 MiniMax H3 后在此展示成片</span></div>'+stLine+'<div class="glow"></div></div>';
   }
   if(i.cover&&i.cover.file){
-    return '<div class="cover image hasimg zoom" data-preview="1"><div class="imgwrap"><img class="cimg" src="/api/images/'+esc(i.cover.file)+'" alt="AI 生成封面" loading="lazy"></div>'+ribbon+stLine+'<div class="glow"></div></div>';
+    return '<div class="cover image hasimg zoom" data-preview="1"><div class="imgwrap"><img class="cimg" src="/api/images/'+esc(thumbUrl(i.cover.file))+'" alt="AI 生成封面" loading="lazy" data-full="/api/images/'+esc(i.cover.file)+'"></div>'+ribbon+stLine+'<div class="glow"></div></div>';
   }
   return '<div class="cover image">'+ribbon+'<div class="ph"'+(i.coverError?' title="'+esc(i.coverError)+'"':'')+'><span class="ic">🖼</span><span class="t">图像提示词</span><span class="s">'+(i.coverError?'⚠ 生图失败':'分配「生图」模型后自动出封面')+'</span></div>'+stLine+'<div class="glow"></div></div>';
 }

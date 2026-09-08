@@ -65,7 +65,7 @@ npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SS
 
 - **开启方式**：「LLM 配置 → ⚖ 模型分配 → 生图」选择一个支持图像生成的「提供商 · 模型」（如中转上的 `gpt-image-*`、`gemini-*-image`、`grok-imagine-image-*` 等）。**留空 = 不生图**（生图不会自动回退到对话模型或环境变量）。
 - **调用约定**：优先走 OpenAI 兼容 `POST {base}/images/generations`（body 仅 `model` / `prompt` / `n:1`），响应兼容 `b64_json` 与 `url`（含 `data:` URL）；失败（除 401 外）**自动降级 chat completions** 并从回复提取图片（`message.images` / data URI / markdown 图 / 裸 URL）——部分中转把 `gemini-*-image` 类模型只绑定在对话端点。**chat 兜底请求带 `stream:true`**：部分中转（如 flow2api）非流式会缓冲到上游生成完（单张可达 20+ 分钟）才响应，被前置 CDN 空闲超时（Cloudflare 100s）掐断成 524；流式立即 200、心跳续命、最终 chunk 携带图片 markdown，受「总预算 `LLM_IMAGE_CHAT_TIMEOUT_MS`（默认 30min）+ 空闲看门狗 `LLM_IMAGE_CHAT_IDLE_MS`（默认 90s）」双超时约束；中转忽略 `stream` 直接回 JSON 时按旧逻辑整体解析。两路都失败时错误信息会合并透出中转的错误响应体摘要（如 `auth_unavailable`），便于定位渠道问题。OpenAI / Gemini 协议自动映射到各自的兼容端点，Anthropic 无图像接口、分配后会明确报错。
-- **产物与展示**：图片保存为 `DATA_DIR/images/{灵感 id}.{png|jpg|webp|gif}`（按魔数识别格式），经 `GET /api/images/:name` 提供给卡片封面（长缓存）。灵感记录中新增 `cover` 字段；历史记录不会补生图。
+- **产物与展示**：图片保存为 `DATA_DIR/images/{灵感 id}.{png|jpg|webp|gif}`（按魔数识别格式），经 `GET /api/images/:name` 提供给卡片封面（长缓存）。画廊卡片展示 **sharp 压缩缩略图** `{id}.thumb.jpg`（宽 480px JPEG 约 1/10 体积，随封面自动生成、缺失时按需懒生成并落盘缓存、解码失败回退原图），**点击卡片灯箱加载原图**；后台详情弹窗亦展示原图。灵感记录中新增 `cover` 字段；历史记录不会补生图。
 - **失败与清理**：生图超时默认 180s（`LLM_IMAGE_TIMEOUT_MS` 可调），失败只记 `coverError`（卡片占位图悬停可见原因），不影响 status=ready 的提示词；灵感被清空/淘汰后封面文件随孤儿清理自动删除。
 - **失败自动重试**：生图失败的条目（有 `coverError` 且无 `cover`）会被自动补生图——独立定时器每 `COVER_RETRY_INTERVAL_MINUTES` 分钟检查一次，按指数退避（5min → 10min → 20min… 上限 1h）重试，单条最多 `COVER_RETRY_MAX_ATTEMPTS` 次（`0`=不限）。成功后写回封面并清除 `coverError`。修正生图配置（提供商/模型分配/设置保存）会立即触发一轮补图；也可 `POST /api/covers/retry`（admin）手动强制重试。重试进度仅存内存，服务重启后重新计数。生成时未启用生图（无 `coverError` 的缺封面条目）不属于失败，不会被补图。
 

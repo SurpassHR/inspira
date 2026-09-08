@@ -4,7 +4,7 @@ import { coverRetryCandidates, resetCoverRetryState, retryFailedCovers } from '.
 import { dashboardHtml } from './dashboard.js';
 import { attachLiveReload, devBadgeHtml, liveReloadScript } from './livereload.js';
 import { describeError } from './errors.js';
-import { pruneOrphanImages, readInspirationImage } from './images.js';
+import { pruneOrphanImages, readCoverThumb, readInspirationImage } from './images.js';
 import { activeLlmTarget, activeTaskTargets, fetchProviderModels, llmReady } from './llm.js';
 import {
   deleteLlmProvider, getLlmProvider, getLlmProviders, getModelAssignments, isMaskedKey,
@@ -300,8 +300,10 @@ app.get('/api/inspirations/:id', (c) => {
 });
 
 // 封面图（DATA_DIR/images/，文件名 = 灵感 id.扩展名；内容按 id 寻址、不可变，可长缓存）
+// *.thumb.jpg 为压缩缩略图：已生成直接返回，未生成则现做并落盘缓存
 app.get('/api/images/:name', async (c) => {
-  const img = await readInspirationImage(c.req.param('name'));
+  const name = c.req.param('name');
+  const img = (await readCoverThumb(name)) ?? (await readInspirationImage(name));
   if (!img) return c.json({ error: '未找到该图片' }, 404);
   return c.body(new Uint8Array(img.bytes), 200, {
     'content-type': img.contentType,
