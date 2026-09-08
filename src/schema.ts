@@ -3,6 +3,8 @@ import { z } from 'zod';
 export const settingsSchema = z.object({
   intervalMinutes: z.number().int().min(1).max(10080),
   coverRetryIntervalMinutes: z.number().int().min(1).max(10080),
+  // 补图轮内相邻两张的等待间隔（秒）：0=不等待，避免连续撞生图配额
+  coverRetryDelaySeconds: z.number().int().min(0).max(3600),
   enabled: z.boolean(),
   themes: z.array(z.string().trim().min(1).max(100)).min(1),
   activeThemes: z.array(z.string().trim().min(1).max(100)).min(1),

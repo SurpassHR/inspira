@@ -24,9 +24,11 @@ const schema = z.object({
   // 生图 chat 兜底（流式）空闲看门狗：超过该时长没有任何数据（含心跳）即判死；
   // 须大于中转心跳间隔（如 flow2api 每 ≤15s 发 keepalive）、小于前置 CDN 空闲上限（如 Cloudflare 100s）
   LLM_IMAGE_CHAT_IDLE_MS: z.coerce.number().int().positive().default(90_000),
-  // 封面生图失败自动重试：检查间隔（分钟，同时是指数退避的基准单位）与单条最大尝试次数（0=不限）。
-  // 运行期可在「生成设置」界面覆盖检查间隔（持久化到 settings）；这里作为默认值
+  // 封面生图失败自动重试：检查间隔（分钟，同时是指数退避的基准单位）、补图轮内相邻两张的
+  // 等待间隔（秒，0=不等待）与单条最大尝试次数（0=不限）。
+  // 运行期可在「生成设置」界面覆盖前两者（持久化到 settings）；这里作为默认值
   COVER_RETRY_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
+  COVER_RETRY_DELAY_SECONDS: z.coerce.number().int().min(0).default(30),
   COVER_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(0).default(6),
   LLM_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.9),
   LLM_MAX_TOKENS: z.coerce.number().int().positive().default(2000),

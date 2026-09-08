@@ -10,6 +10,7 @@ import test from 'node:test';
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'inspira-cover-retry-'));
 process.env.LLM_API_KEY = 'sk-env-fallback-key';
 process.env.COVER_RETRY_MAX_ATTEMPTS = '2';
+process.env.COVER_RETRY_DELAY_SECONDS = '0'; // 默认不等待，间隔测试单独设置
 
 import type { Inspiration } from '../types.js';
 
@@ -21,11 +22,11 @@ const { restartScheduler } = await import('../scheduler.js');
 /** 1x1 PNG，mock 生图端点的成功响应体 */
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-interface Harness { server: Server; port: number; imagesRequests: number }
+interface Harness { server: Server; port: number; imagesRequests: number; imagesTimes: number[] }
 
 /** mock 生图中转：prompt 以 ok- 开头 → 200 PNG；否则 images 400（fatal）+ chat 兜底 404（合并错误） */
 async function startImagegenServer(): Promise<Harness> {
-  const h: Harness = { server: undefined!, port: 0, imagesRequests: 0 };
+  const h: Harness = { server: undefined!, port: 0, imagesRequests: 0, imagesTimes: [] };
   h.server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
@@ -33,6 +34,7 @@ async function startImagegenServer(): Promise<Harness> {
       const body = chunks.length ? (JSON.parse(Buffer.concat(chunks).toString('utf8')) as { prompt?: string }) : {};
       if (req.method === 'POST' && req.url === '/v1/images/generations') {
         h.imagesRequests++;
+        h.imagesTimes.push(Date.now());
         if ((body.prompt ?? '').startsWith('ok-')) {
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }));
@@ -158,4 +160,24 @@ test('restartScheduler（提供商/设置变更钩子）会触发一轮补图', 
   await waitFor(() => !!store.get('d1')!.cover);
   assert.equal(store.get('d1')!.cover!.file, 'd1.png');
   assert.equal(store.get('d1')!.coverError, undefined);
+});
+
+test('轮内相邻补图之间按设置等待 coverRetryDelaySeconds', async () => {
+  await setupProvider();
+  resetCoverRetryState();
+  await store.clear();
+  const cur = store.getSettings();
+  await store.setSettings({ ...cur, coverRetryDelaySeconds: 1 }); // 等待 1 秒
+  const before = h.imagesTimes.length;
+  await store.add(mk('e1', { coverError: 'HTTP 429', prompt: 'ok-e1' }));
+  await store.add(mk('e2', { coverError: 'HTTP 429', prompt: 'ok-e2' }));
+
+  const r = await retryFailedCovers();
+  assert.deepEqual(r, { retried: 2, recovered: 2 });
+  const times = h.imagesTimes.slice(before);
+  assert.equal(times.length, 2);
+  assert.ok(times[1]! - times[0]! >= 900, `相邻两张应间隔约 1s（实际 ${times[1]! - times[0]!}ms）`);
+
+  // 恢复默认 0（不等待），避免影响后续用例
+  await store.setSettings({ ...cur, coverRetryDelaySeconds: 0 });
 });

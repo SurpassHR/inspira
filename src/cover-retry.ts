@@ -56,7 +56,11 @@ export async function retryFailedCovers(opts: { force?: boolean } = {}): Promise
       return opts.force || !s || s.nextTryAt <= now;
     });
     if (due.length) console.log(`[inspira] 封面重试：${due.length} 条待补封面`);
-    for (const item of due) {
+    // 轮内相邻两张之间按设置等待 coverRetryDelaySeconds（0=不等待），避免连续撞生图配额/限速
+    const delayMs = store.getSettings().coverRetryDelaySeconds * 1000;
+    for (let i = 0; i < due.length; i++) {
+      if (i > 0 && delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+      const item = due[i]!;
       try {
         const r = await generateAndSaveImage(item.prompt, item.id, item.aspect);
         // 生图期间条目可能已被删除/更新，重取最新状态再写回（update 对不存在的 id 会重新插入，须防复活）

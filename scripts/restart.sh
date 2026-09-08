@@ -12,8 +12,8 @@ if [ -f .env ]; then
 fi
 PORT="${PORT:-8787}"
 
-# 1. 停止旧进程（tsx 主进程 + sh 包装）
-PIDS=$(ps aux | grep -E 'tsx src/server\.ts' | grep -v grep | awk '{print $2}')
+# 1. 停止旧进程（tsx 主进程 + sh 包装）；无进程时 grep 无匹配退出码 1，须吞掉避免 set -e 静默退出
+PIDS=$(ps aux | grep -E 'tsx src/server\.ts' | grep -v grep | awk '{print $2}') || true
 if [ -n "$PIDS" ]; then
   echo "→ 停止旧进程: $PIDS"
   # shellcheck disable=SC2086

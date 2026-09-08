@@ -156,7 +156,7 @@ test('viewer：管理 GET 可读、写操作一律 403、提供商列表不含�
 
   // 写操作 403
   for (const [method, url, body] of [
-    ['PUT', '/api/settings', { intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }],
+    ['PUT', '/api/settings', { intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }],
     ['PUT', '/api/source-config', { providers: ['wikimedia'] }],
     ['PUT', '/api/llm/providers', { id: 'x', name: 'X', kind: 'openai', apiKey: 'k', models: [] }],
     ['POST', '/api/llm/fetch-models', { kind: 'openai', apiKey: 'k' }],
