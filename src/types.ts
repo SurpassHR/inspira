@@ -29,12 +29,17 @@ export interface ModelAssignment {
   model: string;
 }
 
-/** 任务级模型分配（控制台「LLM 配置 → 模型分配」可改，持久化于 data/llm.json）；null/缺省 = 自动（第一个可用提供商的第一个模型；imagegen 无自动回退，未分配=不生图） */
+/**
+ * 任务级模型分配（控制台「LLM 配置 → 模型分配」可改，持久化于 data/llm.json）。
+ * 每个任务可配多个「提供商 · 模型」（最多 5 个），生成时按任务轮换调用（负载均衡/冗余：
+ * 某个模型失败不影响其他，下一次调用自动换下一个）。
+ * null/空数组 = 自动（第一个可用提供商的第一个模型；imagegen 无自动回退，未分配=不生图）
+ */
 export interface LlmModelAssignments {
-  idea?: ModelAssignment | null;
-  image?: ModelAssignment | null;
-  video?: ModelAssignment | null;
-  imagegen?: ModelAssignment | null;
+  idea?: ModelAssignment[] | null;
+  image?: ModelAssignment[] | null;
+  video?: ModelAssignment[] | null;
+  imagegen?: ModelAssignment[] | null;
 }
 
 export interface InspirationSettings {

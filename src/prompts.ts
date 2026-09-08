@@ -127,7 +127,7 @@ function aspectOrientation(aspect: string): string | undefined {
   return w > h ? '横构图' : w < h ? '竖构图' : '方构图';
 }
 
-export function buildPromptPrompt(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial, style?: string, aspect?: string): ChatMessage[] {
+export function buildPromptPrompt(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial, style?: string, aspect?: string, override?: string): ChatMessage[] {
   const materialLinesText = [
     material.source !== 'original_idea' && material.url ? `素材来源：${material.url}` : null,
     material.imageUrl ? `图像地址：${material.imageUrl}` : null,
@@ -138,6 +138,9 @@ export function buildPromptPrompt(kind: InspirationKind, theme: string, idea: st
   const orient = aspect ? aspectOrientation(aspect) : undefined;
   const aspectLine = orient ? `画面比例：${aspect}\n` : '';
   const aspectNote = orient ? `整段提示词的构图与取景需严格按「${aspect}」（${orient}）设计。` : '';
+  // 主题/风格 override：作为「自定义要求」注入图像分支——由 LLM 按 Krea2 规范提炼重写，而非机械拼接原文
+  const overrideBlock = override ? `\n自定义要求（必须严格遵循、完整体现）：\n${override}` : '';
+  const overrideNote = override ? '自定义要求是创作约束：把创意点子与自定义要求融合提炼、重写为一段新的自洽提示词，不要简单拼接原文。' : '';
 
   const user = kind === 'video'
     ? `主题：${theme}
@@ -151,9 +154,9 @@ ${materialLinesText}
 只输出 copy-ready 的提示词块本身，不要任何解释或额外文字。`
     : `主题：${theme}
 ${styleLine}${aspectLine}创意点子：${idea}
-${materialLinesText}
+${materialLinesText}${overrideBlock}
 
-请直接输出最终英文文生图提示词段落本身（单一连贯段落，约 300–500 词）。${styleNote}${aspectNote}只输出该段落，不要中文解释、不要前后缀。`;
+请直接输出最终英文文生图提示词段落本身（单一连贯段落，约 300–500 词）。${styleNote}${aspectNote}${overrideNote}只输出该段落，不要中文解释、不要前后缀。`;
 
   return [{ role: 'system', content: systemPrompts[kind] }, { role: 'user', content: user }];
 }

@@ -420,10 +420,10 @@ app.put('/api/llm/assignments', async (c) => {
   if (!u) return userOf(c) ? forbidden(c) : unauthorized(c);
   const parsed = modelAssignmentsSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: '模型分配无效', issues: parsed.error.flatten() }, 400);
-  // 引用完整性：提供商必须存在，且模型在其启用列表中
+  // 引用完整性：每个条目里的提供商必须存在，且模型在其启用列表中
   for (const task of LLM_TASKS) {
-    const a = parsed.data[task];
-    if (a) {
+    const list = parsed.data[task] ?? [];
+    for (const a of list) {
       const p = getLlmProvider(a.providerId);
       if (!p) return c.json({ error: `模型分配无效：提供商「${a.providerId}」不存在` }, 400);
       if (!p.models.includes(a.model)) return c.json({ error: `模型分配无效：模型「${a.model}」不在提供商「${p.name || p.id}」的启用列表中` }, 400);

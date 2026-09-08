@@ -173,6 +173,12 @@ body{overflow:hidden}
 .tasklist .trow{display:flex;gap:8px;align-items:baseline}
 .tasklist .tk{color:var(--faint);width:52px;flex:none}
 .tasklist .tm{color:#c9c9ce;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+/* 模型分配：每任务多行「提供商 · 模型」选择器 */
+.asg-rows{display:flex;flex-direction:column;gap:8px}
+.asg-row{display:flex;gap:8px;align-items:center}
+.asg-row .cselect{flex:1;min-width:0}
+.asg-row .asg-del{flex:none;padding:5px 9px;font-size:11px;line-height:1}
+.asg-add{margin-top:8px}
 .health-mini{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
 .hchip{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--bd-2);color:var(--muted)}
 .hchip i{width:6px;height:6px;border-radius:50%;background:#3f3f46;flex:none}
@@ -290,7 +296,7 @@ body{overflow:hidden}
       <section class="sec" id="sec-gen">
         ${!can ? '<div class="ro-banner">🔒 只读模式：您是 viewer 角色，设置修改仅管理员可用</div>' : ''}
         <div class="box ${can ? '' : 'locked'}">
-          <div class="sec-h"><h2>主题 · 风格库与自动生成</h2><span class="pw">主题/风格可配 override 提示词（图像灵感命中即跳过图像提示词请求直接生图）· 保存后即时生效并重排定时任务</span></div>
+          <div class="sec-h"><h2>主题 · 风格库与自动生成</h2><span class="pw">主题/风格可配 override 自定义要求（图像灵感命中时注入，由 LLM 按 Krea2 规范重写为最终提示词）· 保存后即时生效并重排定时任务</span></div>
           <div class="row">
             <div class="field">
               <label class="f">主题库（每次生成随机取一个）</label>
@@ -425,22 +431,26 @@ body{overflow:hidden}
                 <div class="cb-hint">点击模型卡片取消勾选并移除 · 多模型时上方可按关键字筛选并「移除匹配」批量调整 · 未分配任务的生成使用列表中第一个可用提供商的第一个模型</div>
               </div>
               <div class="lform" id="assignForm" style="display:none">
-                <div class="cb-hint" style="font-size:11.5px;color:var(--muted);margin:0 0 14px">为不同生成任务指定不同的「提供商 · 模型」；留空（自动）时使用提供商列表中第一个可用提供商的第一个模型。</div>
+                <div class="cb-hint" style="font-size:11.5px;color:var(--muted);margin:0 0 14px">为不同生成任务指定不同的「提供商 · 模型」；每个任务可配多个（最多 5 个），生成时按任务轮换调用——负载分散、单个模型故障不阻塞整体。留空（自动）时使用提供商列表中第一个可用提供商的第一个模型。</div>
                 <div class="field">
                   <label class="f">创意点子（中文灵感点子）</label>
-                  <div class="cselect" id="asgIdea"></div>
+                  <div class="asg-rows" id="asgIdea"></div>
+                  <button class="btn ghost sm asg-add" id="asgAddIdea" type="button">＋ 添加提供商 · 模型</button>
                 </div>
                 <div class="field">
                   <label class="f">图像提示词（Krea 规范 · 含视频参考画面生图提示词）</label>
-                  <div class="cselect" id="asgImage"></div>
+                  <div class="asg-rows" id="asgImage"></div>
+                  <button class="btn ghost sm asg-add" id="asgAddImage" type="button">＋ 添加提供商 · 模型</button>
                 </div>
                 <div class="field">
                   <label class="f">视频提示词（MiniMax H3 规范 · 固定 6 秒）</label>
-                  <div class="cselect" id="asgVideo"></div>
+                  <div class="asg-rows" id="asgVideo"></div>
+                  <button class="btn ghost sm asg-add" id="asgAddVideo" type="button">＋ 添加提供商 · 模型</button>
                 </div>
                 <div class="field">
                   <label class="f">生图（图像灵感封面 · images 端点优先，自动兼容对话端点图像模型）</label>
-                  <div class="cselect" id="asgImagegen"></div>
+                  <div class="asg-rows" id="asgImagegen"></div>
+                  <button class="btn ghost sm asg-add" id="asgAddImagegen" type="button">＋ 添加提供商 · 模型</button>
                   <div class="cb-hint">图像提示词就绪后自动调用该模型生成封面图并展示在卡片上；留空 = 不生图</div>
                 </div>
                 <div class="cb-hint">删除提供商或从列表移除模型后，对应分配自动失效并回退为自动</div>
@@ -614,13 +624,13 @@ body{overflow:hidden}
   </div>
 </div>
 
-<!-- override 提示词编辑弹窗（主题/风格库共用：图像灵感命中即直出，跳过图像提示词 LLM 请求） -->
+<!-- override 提示词编辑弹窗（主题/风格库共用：图像灵感命中时作为自定义要求注入图像提示词请求，由 LLM 提炼重写） -->
 <div class="overlay" id="ovrmodal">
   <div class="modal wide">
     <div class="mhead"><h2 id="ovrTitle">override 提示词</h2><button class="x" id="ovrClose" type="button" aria-label="关闭">✕</button></div>
-    <div class="ovr-place">图像灵感选中该主题时直接以这段文案作为最终图像提示词并生图，<b>跳过「图像提示词」LLM 请求</b>（点子步骤仍照常生成）；主题未配置时回退到本次命中的风格 override。可引用占位符：<code>{theme}</code> <code>{style}</code> <code>{aspect}</code> <code>{title}</code> <code>{idea}</code>（取不到值的替换为空）；<b>模板未写 <code>{idea}</code> 时系统会把本次点子自动追加到末尾</b>，保证画面随灵感变化——显式写了 <code>{idea}</code> 则完全按模板。视频灵感不受影响。</div>
+    <div class="ovr-place">图像灵感选中该主题时，这段文案作为<b>自定义要求</b>注入「图像提示词」LLM 请求，由 LLM 按 Krea2 规范把本次点子与自定义要求<b>融合提炼、重写为新的最终提示词</b>（不再是机械拼接原文）；主题未配置时回退到本次命中的风格 override。可引用占位符：<code>{theme}</code> <code>{style}</code> <code>{aspect}</code> <code>{title}</code> <code>{idea}</code>（取不到值的替换为空）；点子始终通过「创意点子」块传给 LLM，模板里写不写 <code>{idea}</code> 都会体现画面。视频灵感不受影响。</div>
     <div class="field">
-      <label class="f">自定义图像提示词模板（≤ 5000 字符；留空 = 不使用 override）</label>
+      <label class="f">自定义图像提示词要求（≤ 5000 字符；留空 = 不使用 override；占位符 {theme}/{style}/{aspect}/{title}/{idea}）</label>
       <div class="txtarea" id="ovrText" contenteditable="true" role="textbox" data-placeholder="例如：Cinematic wide shot of {idea}, drenched in {style} lighting…" aria-label="override 提示词模板"></div>
     </div>
     <div class="mfoot">
@@ -687,7 +697,7 @@ askNoEl.addEventListener('click',()=>{
   if(askKind==='gen')applyGenBase();
   else if(askKind==='src')applySrcBase();
   else if(askKind==='llmProv'){if(llmIsNew)showLlmEmpty();else if(llmSelected)selectProvider(llmSelected);}
-  else if(askKind==='llmAsg'){for(const k of ASG_KEYS)asgSelects[k].set(asgVal(savedAssignments[k]));renderAssignBar();}
+  else if(askKind==='llmAsg'){for(const k of ASG_KEYS)asgVals[k]=asgValsFromSaved(savedAssignments[k]);renderAsgAll();renderAssignBar();}
   hideAsk();refreshAsk();
 });
 
@@ -911,7 +921,7 @@ async function loadOverview(){
       const tasksEl=$('#ovTasks');
       tasksEl.innerHTML=any?Object.keys(T).map(k=>{
         const t=T[k][1];
-        return '<div class="trow"><span class="tk">'+T[k][0]+'</span><span class="tm">'+esc(t?(t.label+' · '+t.model):'（自动回退或未分配）')+'</span></div>';
+        return '<div class="trow"><span class="tk">'+T[k][0]+'</span><span class="tm">'+esc(t?(t.label+' · '+t.model+(t.count>1?'（共 '+t.count+' 个 · 轮换）':'')):'（自动回退或未分配）')+'</span></div>';
       }).join(''):'<div class="trow"><span class="tk">提示</span><span class="tm" style="color:var(--faint)">LLM 未配置 — 在「LLM 配置」添加提供商后自动调度才会运行</span></div>';
       $('#ovLlmCard').style.display='';
     }
@@ -1279,7 +1289,7 @@ async function loadSettings(){
 $('#genReload').addEventListener('click',()=>{if(guardAsk())return;loadSettings();toast('已重新加载当前设置');});
 ['click','input','keydown','focusout'].forEach(ev=>$('#sec-gen').addEventListener(ev,refreshAsk));
 
-/* ===== 主题/风格 override 提示词编辑（图像灵感命中即直出：跳过「图像提示词」LLM 请求，模板渲染后直接生图） ===== */
+/* ===== 主题/风格 override 提示词编辑（图像灵感命中时作为自定义要求注入图像提示词请求，由 LLM 提炼重写） ===== */
 function makeArea(el){
   const NBSP=String.fromCharCode(160);
   el.addEventListener('paste',e=>{
@@ -1645,16 +1655,42 @@ function asgOptions(){
   }
   return os;
 }
-function asgVal(a){return a?(a.providerId+'|'+a.model):'';}
 function asgFromVal(v){if(!v)return null;const i=v.indexOf('|');if(i<1)return null;return {providerId:v.slice(0,i),model:v.slice(i+1)};}
-const asgSelects={
-  idea:makeSelect($('#asgIdea'),{options:asgOptions,onChange:renderAssignBar}),
-  image:makeSelect($('#asgImage'),{options:asgOptions,onChange:renderAssignBar}),
-  video:makeSelect($('#asgVideo'),{options:asgOptions,onChange:renderAssignBar}),
-  imagegen:makeSelect($('#asgImagegen'),{options:asgOptions,onChange:renderAssignBar}),
-};
+/* 模型分配：每任务可配多行「提供商 · 模型」，生成时轮换调用（最多 ASG_MAX 个） */
+const ASG_MAX=5;
+let asgVals={idea:[],image:[],video:[],imagegen:[]}; // 每任务：['providerId|model', ...]，空数组=自动
+function asgId(t){return 'asg'+t[0].toUpperCase()+t.slice(1);} // asgIdea / asgImage / asgVideo / asgImagegen
+function asgValsFromSaved(a){return (a||[]).map(x=>x?(x.providerId+'|'+x.model):null).filter(Boolean);}
+function renderAsgTask(t){
+  const wrap=document.getElementById(asgId(t));
+  const addBtn=document.getElementById('asgAdd'+t[0].toUpperCase()+t.slice(1));
+  const vals=asgVals[t];
+  wrap.innerHTML='';
+  vals.forEach((v,i)=>{
+    const row=document.createElement('div');row.className='asg-row';
+    const selEl=document.createElement('div');selEl.className='cselect';
+    const del=document.createElement('button');del.type='button';del.className='btn ghost sm asg-del';del.textContent='✕';del.title='移除该分配（全部移除=自动）';
+    const sel=makeSelect(selEl,{options:asgOptions,onChange:()=>{
+      const nv=sel.get();
+      if(!nv){vals.splice(i,1);renderAsgTask(t);renderAssignBar();return;} // 选回自动=移除该行
+      vals[i]=nv;renderAssignBar();
+    }});
+    sel.set(v);
+    del.addEventListener('click',()=>{vals.splice(i,1);renderAsgTask(t);renderAssignBar();});
+    row.appendChild(selEl);row.appendChild(del);
+    wrap.appendChild(row);
+  });
+  addBtn.style.display=vals.length>=ASG_MAX?'none':'';
+  addBtn.onclick=()=>{vals.push('');renderAsgTask(t);renderAssignBar();};
+}
+function renderAsgAll(){ASG_KEYS.forEach(renderAsgTask);}
 function currentAssignments(){
-  return {idea:asgFromVal(asgSelects.idea.get()),image:asgFromVal(asgSelects.image.get()),video:asgFromVal(asgSelects.video.get()),imagegen:asgFromVal(asgSelects.imagegen.get())};
+  const out={};
+  for(const k of ASG_KEYS){
+    const arr=(asgVals[k]||[]).map(asgFromVal).filter(Boolean);
+    out[k]=arr.length?arr:null;
+  }
+  return out;
 }
 function hasAssignChanges(){
   const cur=currentAssignments();
@@ -1668,8 +1704,8 @@ function renderAssignBar(){
 async function loadAssignments(){
   try{savedAssignments=await jf('/api/llm/assignments');}
   catch(e){savedAssignments={idea:null,image:null,video:null,imagegen:null};}
-  for(const k of ASG_KEYS){asgSelects[k].refresh();asgSelects[k].set(asgVal(savedAssignments[k]));}
-  renderProviders();renderAssignBar();
+  for(const k of ASG_KEYS)asgVals[k]=asgValsFromSaved(savedAssignments[k]);
+  renderAsgAll();renderProviders();renderAssignBar();
 }
 async function saveLlmAsgAsk(){
   if(asgSaving)return false;
@@ -1678,16 +1714,16 @@ async function saveLlmAsgAsk(){
     const data=await jf('/api/llm/assignments',{method:'PUT',headers:{'content-type':'application/json'},
       body:JSON.stringify(currentAssignments())});
     savedAssignments=data;
-    for(const k of ASG_KEYS)asgSelects[k].set(asgVal(savedAssignments[k]));
-    renderProviders();renderAssignBar();
+    for(const k of ASG_KEYS)asgVals[k]=asgValsFromSaved(savedAssignments[k]);
+    renderAsgAll();renderProviders();renderAssignBar();
     toast('已保存模型分配');
     return true;
   }catch(e){toast('保存失败：'+e.message,false);return false;}
   finally{asgSaving=false;renderAssignBar();}
 }
 $('#asgReset').addEventListener('click',()=>{
-  for(const k of ASG_KEYS)asgSelects[k].set('');
-  renderAssignBar();
+  for(const k of ASG_KEYS)asgVals[k]=[];
+  renderAsgAll();renderAssignBar();
 });
 $('#assignNav').addEventListener('click',e=>{if(guardAsk())return;showAssignView();});
 $('#assignNav').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();if(guardAsk())return;showAssignView();}});

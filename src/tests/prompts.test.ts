@@ -9,6 +9,22 @@ function has(text: string, artifact: string): void {
   assert.ok(text.includes(artifact), `应当包含: ${artifact}`);
 }
 
+test('buildPromptPrompt：override 作为自定义要求注入图像分支（由 LLM 重写），视频分支忽略', () => {
+  const m = { source: 'original_idea' as const, label: '原创点子' };
+  const img = buildPromptPrompt('image', '自然', '雨中霓虹书店', m, 'anime', '3:4', 'Cinematic wide shot of 雨中霓虹书店');
+  const user = img[1]!.content;
+  has(user, '自定义要求（必须严格遵循、完整体现）');
+  has(user, 'Cinematic wide shot of 雨中霓虹书店');
+  has(user, '不要简单拼接原文');
+  // 未命中 override 时不出现该块
+  const plain = buildPromptPrompt('image', '自然', '雨中霓虹书店', m, 'anime', '3:4');
+  noArtifact(plain[1]!.content, '自定义要求');
+  // 视频分支忽略 override（mmh3 正文不动）
+  const vid = buildPromptPrompt('video', '自然', '雨中霓虹书店', m, undefined, undefined, 'SHOULD NOT APPEAR');
+  noArtifact(vid[1]!.content, '自定义要求');
+  noArtifact(vid[1]!.content, 'SHOULD NOT APPEAR');
+});
+
 test('krea2 图像系统提示词保留原规范', () => {
   const p = systemPrompts.image;
   has(p, 'text-to-image models');

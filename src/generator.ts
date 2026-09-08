@@ -8,7 +8,8 @@ import type { Inspiration, InspirationCover, InspirationKind, InspirationSetting
 
 export interface GeneratorDeps {
   idea(material: SourceMaterial, theme: string): Promise<string>;
-  prompt(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial, style?: string, aspect?: string): Promise<string>;
+  /** override 渲染结果作为「自定义要求」注入（未命中 override 时为 undefined） */
+  prompt(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial, style?: string, aspect?: string, override?: string): Promise<string>;
   /** 为视频提示词中的 <Picture N> 参考画面生成配套英文生图提示词 */
   picture(description: string, theme: string, idea: string, style?: string): Promise<string>;
   /** 「生图」：为图像类灵感的最终提示词产出封面图（未提供或未分配生图模型时跳过） */
@@ -19,8 +20,8 @@ export interface GeneratorDeps {
 export const defaultDeps: GeneratorDeps = {
   // 任务路由：点子 → idea；图像提示词与视频参考画面生图提示词 → image；视频提示词 → video
   idea: (material, theme) => chatCompletion(buildIdeaPrompt(theme, material), { task: 'idea' }),
-  prompt: (kind, theme, idea, material, style, aspect) =>
-    chatCompletion(buildPromptPrompt(kind, theme, idea, material, style, aspect), { task: kind === 'video' ? 'video' : 'image' }),
+  prompt: (kind, theme, idea, material, style, aspect, override) =>
+    chatCompletion(buildPromptPrompt(kind, theme, idea, material, style, aspect, override), { task: kind === 'video' ? 'video' : 'image' }),
   picture: (description, theme, idea, style) => chatCompletion(buildPicturePrompt(description, theme, idea, style), { task: 'image' }),
   imagegen: (prompt, id, aspect) => generateAndSaveImage(prompt, id, aspect),
   material: (source, theme) => resolveSourceMaterial(source, theme),
@@ -91,19 +92,16 @@ export const OVERRIDE_PLACEHOLDERS = ['theme', 'style', 'aspect', 'title', 'idea
 /**
  * 渲染 override 模板：把 {theme}/{style}/{aspect}/{title}/{idea} 依次替换为本次生成的实际值。
  * 风格未选中/标题缺省时为 undefined → 替换为空串；未出现的占位符保持原样（留给用户自定义）。
- * 模板**未显式引用 {idea}** 时，自动把本次点子追加到末尾（保证画面随灵感变化）；
- * 显式写了 {idea} 则完全按模板（显式优先）。
+ * 渲染结果作为「自定义要求」注入图像提示词 LLM 请求——点子永远通过「创意点子」块传给 LLM，
+ * 由 LLM 提炼重写为 Krea2 提示词（不再机械追加到模板末尾）。
  */
 export function renderOverrideTemplate(tpl: string, vars: { theme: string; style?: string; aspect?: string; title?: string; idea: string }): string {
-  const explicitIdea = tpl.includes('{idea}');
-  let out = tpl
+  return tpl
     .replace(/\{theme\}/g, vars.theme)
     .replace(/\{style\}/g, vars.style ?? '')
     .replace(/\{aspect\}/g, vars.aspect ?? '')
     .replace(/\{title\}/g, vars.title ?? '')
     .replace(/\{idea\}/g, vars.idea);
-  if (!explicitIdea && vars.idea.trim()) out += '\n' + vars.idea.trim();
-  return out;
 }
 
 /**
@@ -124,8 +122,9 @@ export function pickOverridePrompt(settings: InspirationSettings, kind: Inspirat
 /**
  * 生成一条灵感：
  * 1. 收集素材（热点/热图/无）→ 2. LLM 产出创意点子 → 3. 产出最终英文提示词：
- *    图像灵感命中主题/风格 override 时**跳过 LLM 图像提示词请求**，直接以渲染后的自定义提示词；
- *    其余（含全部视频）按 krea2/mmh3 规范走 LLM
+ *    图像灵感命中主题/风格 override 时，渲染结果作为「自定义要求」注入图像提示词请求，
+ *    由 LLM 按 krea2 规范把点子与自定义要求融合提炼、重写为最终提示词（不机械拼接）；
+ *    未命中或视频按 krea2/mmh3 规范走 LLM
  * → 4. 图像类灵感若已分配「生图」模型，自动生成封面图。
  * 任一步失败都会返回 status='failed' 的条目并附带错误信息（不抛出）；
  * 封面生图失败只记 coverError，不影响提示词本身（status 仍为 ready）。
@@ -144,11 +143,13 @@ export async function generateInspiration(settings: InspirationSettings, seed: I
     const material = await deps.material(seed.source, seed.theme);
     // 点子步骤产出「标题（10~15 字，展示用）+ 点子正文（喂给提示词生成）」；解析失败时 title 缺省
     const { title, idea } = splitIdeaOutput(stripCodeFences((await deps.idea(material, seed.theme)).trim()));
-    // 图像灵感命中 override（主题优先→风格回退）时直出：跳过「图像提示词」LLM 请求，模板渲染即最终提示词
+    // 图像灵感命中 override（主题优先→风格回退）时，渲染为「自定义要求」注入图像提示词请求：
+    // 由 LLM 把点子与自定义要求融合提炼、重写为新的 Krea2 提示词（不再是机械拼接的直出）
     const overrideTpl = pickOverridePrompt(settings, seed.kind, seed.theme, seed.style);
-    const prompt = overrideTpl !== undefined
+    const override = overrideTpl !== undefined
       ? renderOverrideTemplate(overrideTpl, { theme: seed.theme, style: seed.style, aspect: seed.aspect, title, idea })
-      : stripCodeFences((await deps.prompt(seed.kind, seed.theme, idea, material, seed.style, seed.aspect)).trim());
+      : undefined;
+    const prompt = stripCodeFences((await deps.prompt(seed.kind, seed.theme, idea, material, seed.style, seed.aspect, override)).trim());
     // 视频提示词保留 <Picture N> 引用，并为每个引用生成配套英文生图提示词；
     // 单个参考画面的提示词生成失败不影响整条灵感（该画面 imagePrompt 留空）
     let pictures: PictureRef[] | undefined;
@@ -189,6 +190,6 @@ export async function generateInspiration(settings: InspirationSettings, seed: I
 }
 
 /** 供心跳/调试使用的消息序列查看函数 */
-export function previewMessages(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial): ChatMessage[] {
-  return buildPromptPrompt(kind, theme, idea, material);
+export function previewMessages(kind: InspirationKind, theme: string, idea: string, material: SourceMaterial, override?: string): ChatMessage[] {
+  return buildPromptPrompt(kind, theme, idea, material, undefined, undefined, override);
 }

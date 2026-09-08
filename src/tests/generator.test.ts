@@ -239,13 +239,22 @@ test('视频灵感不调用生图；未提供 imagegen 依赖的图像灵感也�
   assert.equal(called, 0);
 });
 
-test('图像灵感：主题命中 override 时跳过「图像提示词」请求，模板渲染直出并作为生图入参', async () => {
+interface PromptCall { override: string | undefined; idea: string }
+function capturePrompt(seen: PromptCall[]) {
+  return async (_k: unknown, _t: unknown, idea: string, _m: unknown, _s: unknown, _a: unknown, override: string | undefined): Promise<string> => {
+    seen.push({ override, idea });
+    return 'Rewritten Krea2 prompt paragraph.';
+  };
+}
+
+test('图像灵感：主题命中 override 时渲染为「自定义要求」注入 LLM 重写，封面用重写后的提示词', async () => {
   let promptCalls = 0;
-  const seen: string[] = [];
+  const seen: PromptCall[] = [];
+  const igSeen: string[] = [];
   const deps = imageDeps({
     idea: async () => '标题：雨夜霓虹书店的猫店长\n点子：霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。',
-    prompt: async () => { promptCalls++; return 'should-not-be-used'; },
-    imagegen: async (prompt) => { seen.push(prompt); return { file: 's1.png', model: 'm' }; },
+    prompt: async (_k, _t, idea, _m, _s, _a, override) => { promptCalls++; seen.push({ override, idea }); return 'Rewritten Krea2 prompt paragraph.'; },
+    imagegen: async (prompt) => { igSeen.push(prompt); return { file: 's1.png', model: 'm' }; },
   });
   const s: InspirationSettings = {
     ...defaultSettings,
@@ -253,72 +262,79 @@ test('图像灵感：主题命中 override 时跳过「图像提示词」请求�
   };
   const item = await generateInspiration(s, seed, deps);
   assert.equal(item.status, 'ready');
-  assert.equal(promptCalls, 0, '命中 override 时不得请求 LLM 图像提示词');
+  assert.equal(promptCalls, 1, '命中 override 仍请求 LLM 图像提示词（由 LLM 提炼重写，不再直出）');
   assert.equal(item.title, '雨夜霓虹书店的猫店长');
   assert.equal(item.idea, '霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。', '点子步骤仍照常生成');
-  assert.equal(item.prompt, 'Cinematic wide shot of 霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。 in anime style, aspect 3:4.');
-  assert.deepEqual(seen, ['Cinematic wide shot of 霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。 in anime style, aspect 3:4.'], '封面生图直接用渲染后的 override 提示词');
+  assert.deepEqual(seen, [{
+    override: 'Cinematic wide shot of 霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。 in anime style, aspect 3:4.',
+    idea: '霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。',
+  }], 'override 渲染后作为自定义要求注入，点子同时传给 LLM');
+  assert.equal(item.prompt, 'Rewritten Krea2 prompt paragraph.', '最终提示词 = LLM 重写结果，而非模板直出');
+  assert.deepEqual(igSeen, ['Rewritten Krea2 prompt paragraph.'], '封面生图用重写后的最终提示词');
 });
 
-test('override：主题优先于风格；主题未配置时回退到命中的风格', async () => {
-  let promptCalls = 0;
+test('override：主题优先于风格；主题未配置时回退到命中的风格（均注入 LLM）', async () => {
+  const seen: (string | undefined)[] = [];
+  const promptFn = async (_k: unknown, _t: unknown, _i: string, _m: unknown, _s: unknown, _a: unknown, override: string | undefined) => { seen.push(override); return 'x'; };
   const both: InspirationSettings = {
     ...defaultSettings,
     themeOverrides: { 自然: 'T={theme} S={style}' },
     styleOverrides: { anime: 'S={style} T={theme}' },
   };
-  const item1 = await generateInspiration(both, seed, imageDeps({
-    prompt: async () => { promptCalls++; return 'x'; },
-  }));
-  assert.equal(item1.prompt, 'T=自然 S=anime\n雨夜里的霓虹书店', '两者都命中时主题 override 优先；模板未写 {idea} 自动追加点子');
+  const item1 = await generateInspiration(both, seed, imageDeps({ prompt: promptFn }));
+  assert.equal(item1.status, 'ready');
+  assert.deepEqual(seen, ['T=自然 S=anime'], '两者都命中时主题 override 优先注入（不再机械追加点子）');
 
   const styleOnly: InspirationSettings = {
     ...defaultSettings,
     styleOverrides: { anime: 'S={style} T={theme}' },
   };
-  const item2 = await generateInspiration(styleOnly, seed, imageDeps({
-    prompt: async () => { promptCalls++; return 'x'; },
-  }));
-  assert.equal(item2.prompt, 'S=anime T=自然\n雨夜里的霓虹书店', '主题无 override 时回退到风格 override；同样自动追加点子');
-  assert.equal(promptCalls, 0, '两条 override 路径都不应调用 LLM 图像提示词');
+  const item2 = await generateInspiration(styleOnly, seed, imageDeps({ prompt: promptFn }));
+  assert.deepEqual(seen, ['T=自然 S=anime', 'S=anime T=自然'], '主题无 override 时回退到风格 override 注入');
+  assert.equal(item2.prompt, 'x');
 });
 
-test('override：模板未引用 {idea} 时自动追加点子；显式引用则完全按模板', async () => {
-  let promptCalls = 0;
+test('override：模板未引用 {idea} 时不机械追加点子；显式引用则替换进自定义要求', async () => {
+  const seen: PromptCall[] = [];
   const deps = imageDeps({
     idea: async () => '标题：雨夜霓虹书店的猫店长\n点子：霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。',
-    prompt: async () => { promptCalls++; return 'x'; },
+    prompt: capturePrompt(seen),
   });
-  // 模板未写 {idea}：渲染结果末尾自动追加点子正文（不追加标题）
+  // 模板未写 {idea}：override 保持模板原样，点子通过「创意点子」块传给 LLM（不拼接）
   const auto = await generateInspiration({
     ...defaultSettings,
     themeOverrides: { 自然: 'Neon alley, cinematic' },
   }, seed, deps);
-  assert.equal(auto.prompt, 'Neon alley, cinematic\n霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。');
-  // 模板显式写了 {idea}：完全按模板，不重复追加
+  assert.deepEqual(seen, [{ override: 'Neon alley, cinematic', idea: '霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。' }]);
+  // 模板显式写了 {idea}：替换进自定义要求
   const explicit = await generateInspiration({
     ...defaultSettings,
     themeOverrides: { 自然: 'Shot of {idea}, moody' },
   }, seed, deps);
-  assert.equal(explicit.prompt, 'Shot of 霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。, moody');
-  assert.equal(promptCalls, 0);
+  assert.deepEqual(seen[1], { override: 'Shot of 霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。, moody', idea: '霓虹灯牌在雨中晕染，猫店长蜷在旧书堆旁打盹。' });
+  assert.equal(auto.prompt, 'Rewritten Krea2 prompt paragraph.');
+  assert.equal(explicit.prompt, 'Rewritten Krea2 prompt paragraph.');
 });
 
-test('override：点子为空时不追加多余换行', async () => {
+test('override：点子为空时渲染无多余内容', async () => {
+  const seen: PromptCall[] = [];
   const s: InspirationSettings = {
     ...defaultSettings,
     themeOverrides: { 自然: 'Plain prompt' },
   };
   const item = await generateInspiration(s, seed, imageDeps({
     idea: async () => '',
+    prompt: capturePrompt(seen),
   }));
-  assert.equal(item.prompt, 'Plain prompt');
+  assert.deepEqual(seen, [{ override: 'Plain prompt', idea: '' }]);
+  assert.equal(item.prompt, 'Rewritten Krea2 prompt paragraph.');
 });
 
-test('override：未命中（主题与风格均未配置）时照常请求 LLM 图像提示词', async () => {
+test('override：未命中（主题与风格均未配置）时照常请求 LLM 图像提示词且不注入', async () => {
   let promptCalls = 0;
+  const ovs: (string | undefined)[] = [];
   const deps = imageDeps({
-    prompt: async () => { promptCalls++; return 'Auto LLM prompt.'; },
+    prompt: async (_k, _t, _i, _m, _s, _a, override) => { promptCalls++; ovs.push(override); return 'Auto LLM prompt.'; },
   });
   const s: InspirationSettings = {
     ...defaultSettings,
@@ -328,15 +344,17 @@ test('override：未命中（主题与风格均未配置）时照常请求 LLM �
   const item = await generateInspiration(s, seed, deps);
   assert.equal(item.status, 'ready');
   assert.equal(promptCalls, 1);
+  assert.deepEqual(ovs, [undefined], '未命中 override 时不注入自定义要求');
   assert.equal(item.prompt, 'Auto LLM prompt.');
 });
 
 test('override：视频灵感不受影响（即使主题/风格配了 override 仍走视频提示词 LLM）', async () => {
   let promptCalls = 0;
+  let ov: string | undefined = 'sentinel';
   const deps = imageDeps({
     material: async () => ({ source: 'original_idea', label: '原创点子' }),
     idea: async () => '雨夜霓虹书店里的钢琴师',
-    prompt: async () => { promptCalls++; return 'A 6s MiniMax video prompt block.'; },
+    prompt: async (_k, _t, _i, _m, _s, _a, override) => { promptCalls++; ov = override; return 'A 6s MiniMax video prompt block.'; },
   });
   const s: InspirationSettings = {
     ...settings, kinds: ['video'],
@@ -346,18 +364,21 @@ test('override：视频灵感不受影响（即使主题/风格配了 override �
   const item = await generateInspiration(s, { ...seed, kind: 'video' }, deps);
   assert.equal(item.status, 'ready');
   assert.equal(promptCalls, 1);
+  assert.equal(ov, undefined, '视频不注入 override');
   assert.equal(item.prompt, 'A 6s MiniMax video prompt block.', 'override 仅作用于图像灵感');
 });
 
 test('override：未选风格/无标题/无比例时占位符替换为空串', async () => {
+  const seen: PromptCall[] = [];
   const s: InspirationSettings = {
     ...defaultSettings,
     activeStyles: [],
     themeOverrides: { 自然: 's={style}|a={aspect}|t={title}|i={idea}' },
   };
   const sd = { ...seed, style: undefined, aspect: undefined };
-  const item = await generateInspiration(s, sd, imageDeps());
+  const item = await generateInspiration(s, sd, imageDeps({ prompt: capturePrompt(seen) }));
   assert.equal(item.status, 'ready');
   assert.equal(item.title, undefined);
-  assert.equal(item.prompt, 's=|a=|t=|i=雨夜里的霓虹书店');
+  assert.deepEqual(seen, [{ override: 's=|a=|t=|i=雨夜里的霓虹书店', idea: '雨夜里的霓虹书店' }]);
+  assert.equal(item.prompt, 'Rewritten Krea2 prompt paragraph.');
 });

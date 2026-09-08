@@ -66,11 +66,14 @@ export const modelAssignmentSchema = z.object({
   model: z.string().trim().min(1).max(200),
 }).strict();
 
+/** 每任务最多可配的「提供商 · 模型」数量（轮换使用） */
+export const MAX_ASSIGNMENTS_PER_TASK = 5;
+
 export const modelAssignmentsSchema = z.object({
-  idea: modelAssignmentSchema.nullable().optional(),
-  image: modelAssignmentSchema.nullable().optional(),
-  video: modelAssignmentSchema.nullable().optional(),
-  imagegen: modelAssignmentSchema.nullable().optional(),
+  idea: z.array(modelAssignmentSchema).max(MAX_ASSIGNMENTS_PER_TASK).nullable().optional(),
+  image: z.array(modelAssignmentSchema).max(MAX_ASSIGNMENTS_PER_TASK).nullable().optional(),
+  video: z.array(modelAssignmentSchema).max(MAX_ASSIGNMENTS_PER_TASK).nullable().optional(),
+  imagegen: z.array(modelAssignmentSchema).max(MAX_ASSIGNMENTS_PER_TASK).nullable().optional(),
 }).strict();
 
 export type ModelAssignmentsInput = z.infer<typeof modelAssignmentsSchema>;

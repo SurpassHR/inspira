@@ -139,14 +139,14 @@ test('任务模型分配：保存生效、悬空引用 400、健康检查反映�
   // 分配 video → tp/tm2
   const put1 = await app.request('/api/llm/assignments', {
     method: 'PUT', headers: H,
-    body: JSON.stringify({ video: { providerId: 'tp', model: 'tm2' } }),
+    body: JSON.stringify({ video: [{ providerId: 'tp', model: 'tm2' }] }),
   });
   assert.equal(put1.status, 200);
-  const saved = await put1.json() as { video: { providerId: string; model: string } | null; idea: unknown };
-  assert.deepEqual(saved.video, { providerId: 'tp', model: 'tm2' });
+  const saved = await put1.json() as { video: { providerId: string; model: string }[] | null; idea: unknown };
+  assert.deepEqual(saved.video, [{ providerId: 'tp', model: 'tm2' }]);
   assert.equal(saved.idea, null);
-  const got = await (await app.request('/api/llm/assignments', { headers: H })).json() as { video: { model: string } | null };
-  assert.equal(got.video!.model, 'tm2');
+  const got = await (await app.request('/api/llm/assignments', { headers: H })).json() as { video: { model: string }[] | null };
+  assert.equal(got.video![0]!.model, 'tm2');
 
   // 健康检查：video 用分配，idea 仍走默认
   const health = await (await app.request('/api/health', { headers: H })).json() as { llmTasks: Record<string, { model: string } | null> };
@@ -154,17 +154,36 @@ test('任务模型分配：保存生效、悬空引用 400、健康检查反映�
   assert.equal(health.llmTasks.idea!.model, 'tm1');
   assert.equal(health.llmTasks.image!.model, 'tm1');
 
-  // 悬空引用 400：提供商不存在 / 模型不在启用列表
+  // 悬空引用 400：提供商不存在 / 模型不在启用列表（多条目中任一非法即拒）
   const ghost = await app.request('/api/llm/assignments', {
     method: 'PUT', headers: H,
-    body: JSON.stringify({ idea: { providerId: 'ghost', model: 'm' } }),
+    body: JSON.stringify({ idea: [{ providerId: 'ghost', model: 'm' }] }),
   });
   assert.equal(ghost.status, 400);
   const badModel = await app.request('/api/llm/assignments', {
     method: 'PUT', headers: H,
-    body: JSON.stringify({ idea: { providerId: 'tp', model: 'nope' } }),
+    body: JSON.stringify({ idea: [{ providerId: 'tp', model: 'tm1' }, { providerId: 'tp', model: 'nope' }] }),
   });
   assert.equal(badModel.status, 400);
+
+  // 每任务多条目：保存生效、轮换反映在健康检查、超上限 400
+  const multi = await app.request('/api/llm/assignments', {
+    method: 'PUT', headers: H,
+    body: JSON.stringify({ idea: [{ providerId: 'tp', model: 'tm1' }, { providerId: 'tp', model: 'tm2' }] }),
+  });
+  assert.equal(multi.status, 200);
+  const multiSaved = await multi.json() as { idea: { providerId: string; model: string }[] | null };
+  assert.deepEqual(multiSaved.idea, [{ providerId: 'tp', model: 'tm1' }, { providerId: 'tp', model: 'tm2' }]);
+  const health2 = await (await app.request('/api/health', { headers: H })).json() as { llmTasks: Record<string, { model: string; count: number } | null> };
+  assert.equal(health2.llmTasks.idea!.count, 2);
+  assert.ok(['tm1', 'tm2'].includes(health2.llmTasks.idea!.model));
+  const tooMany = await app.request('/api/llm/assignments', {
+    method: 'PUT', headers: H,
+    body: JSON.stringify({ idea: Array.from({ length: 6 }, (_, i) => ({ providerId: 'tp', model: i % 2 ? 'tm1' : 'tm2' })) }),
+  });
+  assert.equal(tooMany.status, 400);
+  // 清回自动，避免影响后续用例
+  await app.request('/api/llm/assignments', { method: 'PUT', headers: H, body: JSON.stringify({ idea: null }) });
 
   // 显式 null 清除分配
   const put2 = await app.request('/api/llm/assignments', {
@@ -177,7 +196,7 @@ test('任务模型分配：保存生效、悬空引用 400、健康检查反映�
   // 删除提供商后，指向它的分配自动失效
   await app.request('/api/llm/assignments', {
     method: 'PUT', headers: H,
-    body: JSON.stringify({ image: { providerId: 'tp', model: 'tm1' } }),
+    body: JSON.stringify({ image: [{ providerId: 'tp', model: 'tm1' }] }),
   });
   await app.request('/api/llm/providers/tp', { method: 'DELETE', headers: H });
   const after = await (await app.request('/api/llm/assignments', { headers: H })).json() as { image: unknown };

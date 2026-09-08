@@ -58,7 +58,7 @@ test.after(() => h.server.close());
 
 async function assignImageGen(providerId: string | null, model?: string): Promise<void> {
   const cur = llmcfg.getModelAssignments();
-  await llmcfg.setModelAssignments({ ...cur, imagegen: providerId && model ? { providerId, model } : null });
+  await llmcfg.setModelAssignments({ ...cur, imagegen: providerId && model ? [{ providerId, model }] : null });
 }
 
 async function setupProvider(): Promise<void> {

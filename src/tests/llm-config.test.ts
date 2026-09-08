@@ -124,7 +124,7 @@ test('resolveLlmTarget 按 task 使用分配的提供商+模型，未分配回�
   // 未分配：默认取第一个可用提供商的第一个模型
   assert.equal(resolveLlmTarget({ task: 'idea' })!.model, 'ma1');
   // 分配 video → 乙/mb1；idea 未分配仍走默认
-  await llmcfg.setModelAssignments({ video: { providerId: 'pb', model: 'mb1' } });
+  await llmcfg.setModelAssignments({ video: [{ providerId: 'pb', model: 'mb1' }] });
   const v = resolveLlmTarget({ task: 'video' })!;
   assert.equal(v.model, 'mb1');
   assert.equal(v.label, '乙');
@@ -135,7 +135,7 @@ test('resolveLlmTarget 按 task 使用分配的提供商+模型，未分配回�
   assert.equal(llmcfg.getModelAssignments().video, null);
   assert.equal(resolveLlmTarget({ task: 'video' })!.model, 'ma1');
   // 分配引用的提供商被删除 → 分配清除
-  await llmcfg.setModelAssignments({ image: { providerId: 'pa', model: 'ma2' } });
+  await llmcfg.setModelAssignments({ image: [{ providerId: 'pa', model: 'ma2' }] });
   await llmcfg.deleteLlmProvider('pa');
   assert.equal(llmcfg.getModelAssignments().image, null);
   await clearProviders();
@@ -145,11 +145,75 @@ test('resolveLlmTarget 按 task 使用分配的提供商+模型，未分配回�
 test('模型分配持久化到磁盘，新模块实例可恢复', async () => {
   await clearProviders();
   await llmcfg.saveLlmProvider({ id: 'px', name: 'X', kind: 'openai', apiKey: 'sk-x', models: ['mx'] });
-  await llmcfg.setModelAssignments({ idea: { providerId: 'px', model: 'mx' }, video: null });
+  await llmcfg.setModelAssignments({ idea: [{ providerId: 'px', model: 'mx' }], video: null });
   const m = await import(`../llm-config.js?assign-reload=${Date.now()}`);
   const a = m.getModelAssignments();
-  assert.deepEqual(a.idea, { providerId: 'px', model: 'mx' });
+  assert.deepEqual(a.idea, [{ providerId: 'px', model: 'mx' }]);
   assert.equal(a.video, null);
+  await clearProviders();
+  await llmcfg.setModelAssignments({});
+});
+
+test('旧版磁盘格式：llm.json 中单对象分配自动迁移为数组', async () => {
+  await clearProviders();
+  await llmcfg.saveLlmProvider({ id: 'py', name: 'Y', kind: 'openai', apiKey: 'sk-y', models: ['my'] });
+  // 直接写旧格式（每任务单对象）到磁盘，模拟历史数据
+  const { writeFileSync } = await import('node:fs');
+  const dir = process.env.DATA_DIR!;
+  writeFileSync(`${dir}/llm.json`, JSON.stringify({
+    providers: [{ id: 'py', name: 'Y', kind: 'openai', apiKey: 'sk-y', models: ['my'] }],
+    assignments: { idea: { providerId: 'py', model: 'my' } },
+  }));
+  const m = await import(`../llm-config.js?legacy-reload=${Date.now()}`);
+  assert.deepEqual(m.getModelAssignments().idea, [{ providerId: 'py', model: 'my' }]);
+  assert.equal(m.getModelAssignmentCount('idea'), 1);
+  await clearProviders();
+  await llmcfg.setModelAssignments({});
+});
+
+test('多分配：每任务多条目轮换选择、计数、去重截断与引用清理', async () => {
+  await clearProviders();
+  await llmcfg.saveLlmProvider({ id: 'pa', name: '甲', kind: 'openai', apiKey: 'sk-a-key', models: ['ma1', 'ma2'] });
+  await llmcfg.saveLlmProvider({ id: 'pb', name: '乙', kind: 'openai', apiKey: 'sk-b-key', models: ['mb1'] });
+
+  // 多条目保存：重复条目去重，超上限截断为 5
+  const dup = [
+    { providerId: 'pa', model: 'ma1' },
+    { providerId: 'pa', model: 'ma1' }, // 重复
+    { providerId: 'pb', model: 'mb1' },
+    { providerId: 'pa', model: 'ma2' },
+  ];
+  await llmcfg.setModelAssignments({ idea: dup });
+  assert.deepEqual(llmcfg.getModelAssignments().idea, [
+    { providerId: 'pa', model: 'ma1' },
+    { providerId: 'pb', model: 'mb1' },
+    { providerId: 'pa', model: 'ma2' },
+  ]);
+  assert.equal(llmcfg.getModelAssignmentCount('idea'), 3);
+
+  // 轮换：连续取回交替命中不同条目，第三次回到第一个（pa → pb → pa → …）
+  const a1 = llmcfg.getModelAssignment('idea')!.providerId;
+  const a2 = llmcfg.getModelAssignment('idea')!.providerId;
+  assert.notEqual(a1, a2);
+  assert.equal(llmcfg.getModelAssignment('idea')!.providerId, a1);
+
+  // imagegen 同样支持多条目，resolve 命中其中一条（注意 setModelAssignments 为整体替换，需带上已有 idea）
+  await llmcfg.setModelAssignments({ ...llmcfg.getModelAssignments(), imagegen: [{ providerId: 'pa', model: 'ma1' }, { providerId: 'pb', model: 'mb1' }] });
+  const ig = resolveLlmTarget({ task: 'imagegen' })!;
+  assert.ok(ig.model === 'ma1' || ig.model === 'mb1');
+
+  // 引用清理：ma1 移出启用列表 → 该条目被剔除，其余保留
+  await llmcfg.saveLlmProvider({ id: 'pa', name: '甲', kind: 'openai', apiKey: 'sk-a-key', models: ['ma2'] });
+  assert.deepEqual(llmcfg.getModelAssignments().idea, [
+    { providerId: 'pb', model: 'mb1' },
+    { providerId: 'pa', model: 'ma2' },
+  ]);
+  // 乙被删除 → 只剩甲/ma2；甲再删 → 全部失效
+  await llmcfg.deleteLlmProvider('pb');
+  assert.deepEqual(llmcfg.getModelAssignments().idea, [{ providerId: 'pa', model: 'ma2' }]);
+  await llmcfg.deleteLlmProvider('pa');
+  assert.equal(llmcfg.getModelAssignments().idea, null);
+  assert.equal(llmcfg.getModelAssignmentCount('idea'), 0);
   await clearProviders();
   await llmcfg.setModelAssignments({});
 });

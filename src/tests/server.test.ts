@@ -162,7 +162,7 @@ test('PUT /api/llm/assignments：imagegen 分配同样校验引用完整性，�
   // 指向不存在的提供商 → 400
   const ghost = await app.request('/api/llm/assignments', {
     method: 'PUT', headers: H,
-    body: JSON.stringify({ imagegen: { providerId: 'ghost', model: 'img-model' } }),
+    body: JSON.stringify({ imagegen: [{ providerId: 'ghost', model: 'img-model' }] }),
   });
   assert.equal(ghost.status, 400);
   // 建提供商后分配成功
@@ -173,11 +173,11 @@ test('PUT /api/llm/assignments：imagegen 分配同样校验引用完整性，�
   assert.equal(prov.status, 200);
   const put = await app.request('/api/llm/assignments', {
     method: 'PUT', headers: H,
-    body: JSON.stringify({ imagegen: { providerId: 'igprov', model: 'img-model' } }),
+    body: JSON.stringify({ imagegen: [{ providerId: 'igprov', model: 'img-model' }] }),
   });
   assert.equal(put.status, 200);
-  const saved = await (await app.request('/api/llm/assignments', { headers: H })).json() as { imagegen: { providerId: string; model: string } | null };
-  assert.deepEqual(saved.imagegen, { providerId: 'igprov', model: 'img-model' });
+  const saved = await (await app.request('/api/llm/assignments', { headers: H })).json() as { imagegen: { providerId: string; model: string }[] | null };
+  assert.deepEqual(saved.imagegen, [{ providerId: 'igprov', model: 'img-model' }]);
   // 清理：重置分配并删除提供商（避免污染其他用例的解析结果）
   await app.request('/api/llm/assignments', { method: 'PUT', headers: H, body: JSON.stringify({ imagegen: null }) });
   await app.request('/api/llm/providers/igprov', { method: 'DELETE', headers: H });

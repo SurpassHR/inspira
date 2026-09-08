@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { describeError, tlsCauseHint } from './errors.js';
-import { getLlmProvider, getLlmProviders, getModelAssignment, isMaskedKey } from './llm-config.js';
+import { getLlmProvider, getLlmProviders, getModelAssignment, getModelAssignmentCount, isMaskedKey } from './llm-config.js';
 import type { LlmProviderKind, LlmTask } from './types.js';
 
 export interface ChatMessage {
@@ -123,11 +123,12 @@ export function activeLlmTarget(): { label: string; model: string; source: 'prov
   return t ? { label: t.label, model: t.model, source: t.source } : null;
 }
 
-/** 各生成任务实际生效的目标（分配优先，未分配回退默认；imagegen 仅按分配；不含密钥） */
-export function activeTaskTargets(): Record<LlmTask, { label: string; model: string } | null> {
+/** 各生成任务实际生效的目标（分配优先，未分配回退默认；imagegen 仅按分配；不含密钥）。
+ *  count = 该任务配置的「提供商 · 模型」条目数（0=自动，>1=多模型轮换） */
+export function activeTaskTargets(): Record<LlmTask, { label: string; model: string; count: number } | null> {
   const disp = (t: LlmTask) => {
     const x = resolveLlmTarget({ task: t });
-    return x ? { label: x.label, model: x.model } : null;
+    return x ? { label: x.label, model: x.model, count: getModelAssignmentCount(t) } : null;
   };
   return { idea: disp('idea'), image: disp('image'), video: disp('video'), imagegen: disp('imagegen') };
 }

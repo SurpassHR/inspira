@@ -42,7 +42,7 @@ async function startServer(handler: (req: IncomingMessage, res: ServerResponse, 
 
 async function assignImageGen(providerId: string | null, model?: string): Promise<void> {
   const cur = llmcfg.getModelAssignments();
-  await llmcfg.setModelAssignments({ ...cur, imagegen: providerId && model ? { providerId, model } : null });
+  await llmcfg.setModelAssignments({ ...cur, imagegen: providerId && model ? [{ providerId, model }] : null });
 }
 
 test('sniffImageExt：按魔数识别 png/jpg/webp/gif，未知字节回退 png', () => {
