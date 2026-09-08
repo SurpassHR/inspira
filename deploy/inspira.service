@@ -1,0 +1,53 @@
+# Inspira 灵感生成器 —— systemd unit（模板）
+# 使用方法见 deploy/systemd-migration.md。落盘路径：/etc/systemd/system/inspira.service
+#
+# 按服务器实际情况替换以下两处：
+#   (1) WorkingDirectory / ExecStart 中的 /srv/inspira  →  项目实际路径
+#   (2) ExecStart 里的 node 绝对路径                  →  command -v node 的输出
+#
+# 不要照抄 nvm 示例路径；node 升级后需同步更新 unit（见迁移文档「风险」节）。
+
+[Unit]
+Description=Inspira 灵感生成器（服务端）
+# 依赖网络就绪（外呼 LLM / 素材源需要）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# 项目根目录：应用自身以 import.meta.url 相对路径读项目根 .env，
+# 因此 WorkingDirectory 不是功能必需，但保持语义一致并兼容未来改动。
+WorkingDirectory=/srv/inspira
+
+# 直接 exec tsx CLI（= npm start 的最终进程，无 npm/sh 中间层）。
+# node_modules/tsx 是直接依赖，npm 布局是实体、pnpm 布局是软链到 .pnpm store，
+# node 都会自动跟随，路径稳定、不随 tsx 小版本变更。
+ExecStart=/home/app/.nvm/versions/node/v24.15.0/bin/node /srv/inspira/node_modules/tsx/dist/cli.mjs src/server.ts
+
+# 编译产物方案（推荐远期切换，见 systemd-migration.md 第七节，需先在服务器 npm run build）：
+# ExecStart=/home/app/.nvm/versions/node/v24.15.0/bin/node /srv/inspira/dist/server.js
+
+# NODE_ENV 不在 .env 体系内（src/env.ts 不加载它）；非 production 会挂 /__livereload。
+# 其余配置（PORT/DATA_DIR/LLM 密钥等）由应用自动读项目根 .env，无需在此重复。
+Environment=NODE_ENV=production
+
+# 服务崩溃/异常退出后自动拉起；正常 stop 不受影响。
+Restart=on-failure
+RestartSec=3
+# 默认 control-group：stop/restart 时整组进程一起收掉（含 tsx 的 esbuild 子进程），
+# 绝无孤儿进程残留占用端口 —— 这就是替代「PID 文件 + 端口兜底」的根本机制。
+KillMode=control-group
+TimeoutStopSec=30
+
+# ---- 可选：就绪探测（不推荐 ExecStartPost，见迁移文档）----
+# 需要在 restart 返回时确认 HTTP 已就绪，改用如下写法（curl 循环最多 ~35s）：
+# ExecStartPost=/bin/sh -c 'for i in $(seq 1 35); do curl -sf --max-time 2 http://127.0.0.1:8787/ >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
+# 注意：ExecStartPost 失败会把 unit 标记为 failed，即使服务随后自愈。
+
+# ---- 可选：按需加固（data/ 需写、.env 需读，勿开过严）----
+# NoNewPrivileges=true
+# PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -103,6 +103,86 @@ npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SS
 
 支持从项目根目录 `.env` 读取（不覆盖已存在的环境变量）。
 
+## 部署（生产）
+
+单实例部署推荐 **systemd 管理 + 编译产物运行**（`node dist/server.js`，不依赖 tsx 运行时）。完整评估与迁移步骤见 `deploy/systemd-migration.md`；unit 模板在 `deploy/inspira.service`（需按服务器替换项目路径与 node 绝对路径）。
+
+### 构建
+
+```bash
+pnpm install          # devDependencies（typescript）参与构建
+npm run build         # 产出 dist/（tsc 编译，已在 .gitignore）
+```
+
+`dist/` 不入库：服务器上构建，或用 CI 产物。应用自载项目根 `.env`（`PORT` / `DATA_DIR` / LLM 密钥等），`NODE_ENV=production` 由 unit 注入（抑制开发热重载）。
+
+### systemd unit（关键行）
+
+```ini
+[Service]
+Type=simple
+WorkingDirectory=/srv/inspira
+ExecStart=/home/app/.nvm/versions/node/v24.15.0/bin/node /srv/inspira/dist/server.js
+Environment=NODE_ENV=production
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+[Install]
+WantedBy=multi-user.target
+```
+
+- 服务单进程、不 daemonize，`Type=simple` 的 MainPID 即服务进程，无需 PID 文件；
+- `KillMode=control-group`：stop/restart 时整组进程收干净，不会残留进程占端口。
+
+### 安装与日常操作
+
+```bash
+sudo install -m 644 deploy/inspira.service /etc/systemd/system/inspira.service
+sudo systemctl daemon-reload
+# 首次启用前确保没有旧的手工实例占着端口（见下方排查），然后：
+sudo systemctl enable --now inspira
+
+sudo systemctl restart inspira      # 部署新版本后
+sudo systemctl disable --now inspira   # 停用并取消开机自启
+```
+
+### 自动部署流水线
+
+`scripts/deploy.sh`（或 `npm run deploy`）实现「git pull → 安装依赖 → 构建 → dist 冒烟 → systemctl restart」全流程，失败自动回退：
+
+- **构建输出到暂存目录 `.dist-next`**（`npx tsc --outDir`），全程不触碰线上 `dist/`；构建/冒烟失败只删暂存，服务继续跑旧版本；
+- **冒烟**在独立端口 + 临时 DATA_DIR 上启动新构建，逐项自检：`/` 返回 200、无 livereload 注入（NODE_ENV=production 生效）、登录返回 admin、`/api/health` 返回 ok——全部通过才换入；
+- **换入前把现有 dist 备份为 `dist.prev`**；`systemctl restart` 后健康检查失败会自动回滚 `dist.prev` 并重启（旧版继续服务）；
+- 前置条件：工作区干净（`git pull --ff-only` 前置校验）、systemd unit 已安装、root 或免密 sudo（`sudo -n`）。
+
+```bash
+npm run deploy                                    # 标准流程
+SKIP_PULL=1 SKIP_SMOKE=1 SMOKE_PORT=18799 bash scripts/deploy.sh   # 按需跳过某阶段
+```
+
+### 日志（journald）
+
+```bash
+sudo journalctl -u inspira -n 100 --no-pager   # 最近 100 行
+sudo journalctl -u inspira -f                  # 实时跟踪
+sudo journalctl -u inspira --since today       # 当天
+```
+
+启动成功的标志日志：`✦ Inspira 灵感生成器已启动: http://localhost:8787`。
+
+### 故障排查
+
+| 现象 | 排查 |
+| --- | --- |
+| 日志反复 `EADDRINUSE`（端口被占） | 迁移期常见：旧的手工实例（restart.sh / nohup 启动）还占着端口。`ss -ltnp 'sport = :8787'` 查看占用者并停掉，再 `systemctl restart inspira`。systemd 管理后不会再有新旧并存（restart 先收干净再启动）。 |
+| 服务起不来且 journal 无有效日志 | ① node 走 nvm 时 ExecStart 是绝对路径——升级 Node 后需同步改 unit 并 `daemon-reload`；② `WorkingDirectory` 路径不对；③ `.env` 缺失或权限不足（应用自载 `.env`，`chmod 600` 即可；systemd 本身不读它）。 |
+| `systemctl restart` 已返回但页面打不开 | `Type=simple` 下 restart 返回 ≠ HTTP 就绪：`journalctl -u inspira -f` 看到启动标志后，再 `curl http://localhost:8787/` 确认 200。 |
+| 重启后后台要重新登录 | 会话仅存内存（`SESSION_TTL_HOURS`），进程重启即清空，属预期行为。 |
+
+### 回退
+
+`deploy/inspira.service` 模板中保留着 tsx 版 ExecStart（注释），换回后 `daemon-reload && restart` 即可；数据目录与运行方式无关，无需迁移。非 systemd 环境仍可用 `scripts/restart.sh`（手工重启），但不要与 systemd 混用同一端口。
+
 ## 常见问题
 
 ### LLM 报「unable to verify the first certificate」等证书校验失败
@@ -248,6 +328,13 @@ src/
   tests/         测试（含 auth.test.ts RBAC 矩阵）
 krea2_sys_prompt.md   文生图系统提示词规范（原样使用）
 mmh3_sys_prompt.md    MiniMax H3 系统提示词规范（加载时自动适配：去掉分步交互、固定 6 秒、直接生成）
+deploy/
+  inspira.service          systemd unit 模板（生产部署，见 README「部署」）
+  systemd-migration.md     systemd 迁移评估与步骤
+scripts/
+  restart.sh               手工重启脚本（回退方案；新部署用 systemctl）
+  deploy.sh                部署流水线（git pull → 构建 → 冒烟 → 原子换入 + systemctl restart，失败自动回退）
+  mock-llm.mjs             本地 mock OpenAI 兼容服务（chat + images/generations，全链路验证用）
 ```
 
 ## mmh3 规范适配说明
