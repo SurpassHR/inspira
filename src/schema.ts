@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const settingsSchema = z.object({
   intervalMinutes: z.number().int().min(1).max(10080),
+  coverRetryIntervalMinutes: z.number().int().min(1).max(10080),
   enabled: z.boolean(),
   themes: z.array(z.string().trim().min(1).max(100)).min(1),
   activeThemes: z.array(z.string().trim().min(1).max(100)).min(1),

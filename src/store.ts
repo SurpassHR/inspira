@@ -27,6 +27,7 @@ function cleanOverrides(raw: unknown, keys: string[]): Record<string, string> {
 }
 const defaultSettings: InspirationSettings = {
   intervalMinutes: Number(process.env.DEFAULT_INTERVAL_MINUTES ?? 60),
+  coverRetryIntervalMinutes: Number(process.env.COVER_RETRY_INTERVAL_MINUTES ?? 15),
   enabled: true,
   themes: [...DEFAULT_THEMES],
   activeThemes: [...DEFAULT_THEMES],

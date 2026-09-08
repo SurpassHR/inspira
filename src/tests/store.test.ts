@@ -8,7 +8,7 @@ const dir = await mkdtemp(join(tmpdir(), 'inspira-store-'));
 process.env.DATA_DIR = dir;
 
 const { store, initStore } = await import('../store.js');
-const settings = { intervalMinutes: 15, enabled: false, themes: ['nature', 'general'], activeThemes: ['nature'], styles: ['anime', 'noir'], activeStyles: ['noir'], kinds: ['video'] as const, sources: ['original_idea'] as const };
+const settings = { intervalMinutes: 15, coverRetryIntervalMinutes: 15, enabled: false, themes: ['nature', 'general'], activeThemes: ['nature'], styles: ['anime', 'noir'], activeStyles: ['noir'], kinds: ['video'] as const, sources: ['original_idea'] as const };
 
 async function fresh(): Promise<typeof import('../store.js')> {
   return import(`../store.js?reload=${Date.now()}-${Math.random()}`) as Promise<typeof import('../store.js')>;
@@ -21,6 +21,7 @@ test('保存并重载 settings', async () => {
   await reloaded.initStore();
   const got = reloaded.store.getSettings();
   assert.equal(got.intervalMinutes, 15);
+  assert.equal(got.coverRetryIntervalMinutes, 15);
   assert.equal(got.enabled, false);
   assert.deepEqual(got.themes, ['nature', 'general']);
   assert.deepEqual(got.activeThemes, ['nature']);

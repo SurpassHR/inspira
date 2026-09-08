@@ -28,9 +28,9 @@ export function coverRetryCandidates(): Inspiration[] {
   return store.list().filter((i) => i.status === 'ready' && i.kind === 'image' && !i.cover && i.coverError);
 }
 
-/** 退避间隔：检查间隔 × 2^(已失败次数-1)，上限 1h */
+/** 退避间隔：检查间隔 × 2^(已失败次数-1)，上限 1h（检查间隔可在「生成设置」界面配置） */
 function backoffMs(attempts: number): number {
-  return Math.min(config.COVER_RETRY_INTERVAL_MINUTES * 60_000 * 2 ** (attempts - 1), 3_600_000);
+  return Math.min(store.getSettings().coverRetryIntervalMinutes * 60_000 * 2 ** (attempts - 1), 3_600_000);
 }
 
 /** 清空重试进度（不传 id = 全部）：修正配置后调用，让下一次重试立即可发 */
@@ -89,11 +89,12 @@ export async function retryFailedCovers(opts: { force?: boolean } = {}): Promise
 }
 
 /**
- * 启动补图定时器：每 COVER_RETRY_INTERVAL_MINUTES 检查一次到期候选。
+ * 启动补图定时器：每 coverRetryIntervalMinutes（生成设置）检查一次到期候选。
+ * 每次调用都会按当前设置重建定时器（restartScheduler 在设置变更后调用，使新间隔即时生效）；
  * 首轮重试由 restartScheduler 的配置变更钩子触发，这里不再立即补一轮。
  */
 export function startCoverRetryTimer(): void {
-  if (timer) return;
-  timer = setInterval(() => void retryFailedCovers(), config.COVER_RETRY_INTERVAL_MINUTES * 60_000);
+  if (timer) { clearInterval(timer); timer = undefined; }
+  timer = setInterval(() => void retryFailedCovers(), store.getSettings().coverRetryIntervalMinutes * 60_000);
   timer.unref?.();
 }

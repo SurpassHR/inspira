@@ -71,29 +71,29 @@ test('PUT /api/source-config：合法保存生效，非法 400，持久化可读
 
 test('PUT /api/settings 拒绝非法输入', async () => {
   const H = await hdr();
-  const res = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 0 }) });
+  const res = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 0, coverRetryIntervalMinutes: 15 }) });
   assert.equal(res.status, 400);
   // 主题库不能为空数组，也不能包含空串
-  const empty = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: [], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }) });
+  const empty = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: true, themes: [], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }) });
   assert.equal(empty.status, 400);
-  const blank = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['  '], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }) });
+  const blank = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: true, themes: ['  '], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }) });
   assert.equal(blank.status, 400);
   // activeThemes 必须是 themes 的子集
-  const notSubset = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: ['外太空'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }) });
+  const notSubset = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: ['外太空'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }) });
   assert.equal(notSubset.status, 400);
   // activeThemes 不能为空（至少 1 个参与随机）
-  const noActive = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: [], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }) });
+  const noActive = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: [], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }) });
   assert.equal(noActive.status, 400);
   // 风格库不能为空数组；activeStyles 必须是 styles 的子集
-  const noStyles = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: ['general'], styles: [], activeStyles: [], kinds: ['image'], sources: ['original_idea'] }) });
+  const noStyles = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: ['general'], styles: [], activeStyles: [], kinds: ['image'], sources: ['original_idea'] }) });
   assert.equal(noStyles.status, 400);
-  const styleNotSubset = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['noir'], kinds: ['image'], sources: ['original_idea'] }) });
+  const styleNotSubset = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['noir'], kinds: ['image'], sources: ['original_idea'] }) });
   assert.equal(styleNotSubset.status, 400);
 });
 
 test('PUT /api/settings 接受 activeStyles 为空数组（= 不指定风格）', async () => {
   const H = await hdr();
-  const ok = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime', 'noir'], activeStyles: [], kinds: ['image'], sources: ['original_idea'] }) });
+  const ok = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime', 'noir'], activeStyles: [], kinds: ['image'], sources: ['original_idea'] }) });
   assert.equal(ok.status, 200);
   const saved = await ok.json() as { styles: string[]; activeStyles: string[] };
   assert.deepEqual(saved.styles, ['anime', 'noir']);
@@ -102,7 +102,7 @@ test('PUT /api/settings 接受 activeStyles 为空数组（= 不指定风格）'
 
 test('PUT /api/settings 接受 themeOverrides/styleOverrides 并校验键须为库内成员', async () => {
   const H = await hdr();
-  const base = { intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime', 'noir'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] };
+  const base = { intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime', 'noir'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] };
   const badTheme = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ ...base, themeOverrides: { ghost: 'X' } }) });
   assert.equal(badTheme.status, 400, 'themeOverrides 键必须在 themes 内');
   const badStyle = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ ...base, styleOverrides: { watercolor: 'S' } }) });
@@ -122,7 +122,7 @@ test('生成流程：未配置 LLM 时状态流转 queued → failed 且错误�
   const H = await hdr();
   const put = await app.request('/api/settings', {
     method: 'PUT', headers: H,
-    body: JSON.stringify({ intervalMinutes: 60, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }),
+    body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }),
   });
   assert.equal(put.status, 200);
 
@@ -188,7 +188,7 @@ test('PRIMARY/禁用状态下手动生成返回 409', async () => {
   const H = await hdr();
   await app.request('/api/settings', {
     method: 'PUT', headers: H,
-    body: JSON.stringify({ intervalMinutes: 60, enabled: false, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }),
+    body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, enabled: false, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }),
   });
   const res = await app.request('/api/generate', { method: 'POST', headers: H });
   assert.equal(res.status, 409);

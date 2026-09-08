@@ -109,7 +109,7 @@ test('失败按指数退避：退避期内跳过、force 立即重试、达上�
   await store.clear();
   await store.add(mk('b1', { coverError: '旧错误', prompt: 'bad-b1' }));
 
-  // 第 1 次失败：coverError 刷新为最新原因，进入退避（间隔 5 分钟后才能再试）
+  // 第 1 次失败：coverError 刷新为最新原因，进入退避（间隔 15 分钟后才能再试）
   let r = await retryFailedCovers();
   assert.deepEqual(r, { retried: 1, recovered: 0 });
   assert.match(store.get('b1')!.coverError!, /HTTP 400/);

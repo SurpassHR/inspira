@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { resetCoverRetryState, retryFailedCovers } from './cover-retry.js';
+import { resetCoverRetryState, retryFailedCovers, startCoverRetryTimer } from './cover-retry.js';
 import { createSeed, generateInspiration } from './generator.js';
 import { pruneOrphanImages } from './images.js';
 import { llmReady } from './llm.js';
@@ -32,6 +32,7 @@ export function restartScheduler(): void {
   // 未分配「生图」模型时该轮会静默跳过，与自动生成开关无关
   resetCoverRetryState();
   void retryFailedCovers();
+  startCoverRetryTimer(); // 按当前设置的间隔重建补图定时器（设置变更后新间隔即时生效）
   if (timer) { clearTimeout(timer); timer = undefined; }
   nextRunAt = null;
   const settings = store.getSettings();
