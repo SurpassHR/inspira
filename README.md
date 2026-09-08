@@ -64,7 +64,7 @@ npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SS
 ### 生图（封面自动生成）
 
 - **开启方式**：「LLM 配置 → ⚖ 模型分配 → 生图」选择一个支持图像生成的「提供商 · 模型」（如中转上的 `gpt-image-*`、`gemini-*-image`、`grok-imagine-image-*` 等）。**留空 = 不生图**（生图不会自动回退到对话模型或环境变量）。
-- **调用约定**：优先走 OpenAI 兼容 `POST {base}/images/generations`（body 仅 `model` / `prompt` / `n:1`），响应兼容 `b64_json` 与 `url`（含 `data:` URL）；失败（除 401 外）**自动降级 chat completions** 并从回复提取图片（`message.images` / data URI / markdown 图 / 裸 URL）——部分中转把 `gemini-*-image` 类模型只绑定在对话端点。两路都失败时错误信息会合并透出中转的错误响应体摘要（如 `auth_unavailable`），便于定位渠道问题。OpenAI / Gemini 协议自动映射到各自的兼容端点，Anthropic 无图像接口、分配后会明确报错。
+- **调用约定**：优先走 OpenAI 兼容 `POST {base}/images/generations`（body 仅 `model` / `prompt` / `n:1`），响应兼容 `b64_json` 与 `url`（含 `data:` URL）；失败（除 401 外）**自动降级 chat completions** 并从回复提取图片（`message.images` / data URI / markdown 图 / 裸 URL）——部分中转把 `gemini-*-image` 类模型只绑定在对话端点。**chat 兜底请求带 `stream:true`**：部分中转（如 flow2api）非流式会缓冲到上游生成完（单张可达 20+ 分钟）才响应，被前置 CDN 空闲超时（Cloudflare 100s）掐断成 524；流式立即 200、心跳续命、最终 chunk 携带图片 markdown，受「总预算 `LLM_IMAGE_CHAT_TIMEOUT_MS`（默认 30min）+ 空闲看门狗 `LLM_IMAGE_CHAT_IDLE_MS`（默认 90s）」双超时约束；中转忽略 `stream` 直接回 JSON 时按旧逻辑整体解析。两路都失败时错误信息会合并透出中转的错误响应体摘要（如 `auth_unavailable`），便于定位渠道问题。OpenAI / Gemini 协议自动映射到各自的兼容端点，Anthropic 无图像接口、分配后会明确报错。
 - **产物与展示**：图片保存为 `DATA_DIR/images/{灵感 id}.{png|jpg|webp|gif}`（按魔数识别格式），经 `GET /api/images/:name` 提供给卡片封面（长缓存）。灵感记录中新增 `cover` 字段；历史记录不会补生图。
 - **失败与清理**：生图超时默认 180s（`LLM_IMAGE_TIMEOUT_MS` 可调），失败只记 `coverError`（卡片占位图悬停可见原因），不影响 status=ready 的提示词；灵感被清空/淘汰后封面文件随孤儿清理自动删除。
 - **失败自动重试**：生图失败的条目（有 `coverError` 且无 `cover`）会被自动补生图——独立定时器每 `COVER_RETRY_INTERVAL_MINUTES` 分钟检查一次，按指数退避（5min → 10min → 20min… 上限 1h）重试，单条最多 `COVER_RETRY_MAX_ATTEMPTS` 次（`0`=不限）。成功后写回封面并清除 `coverError`。修正生图配置（提供商/模型分配/设置保存）会立即触发一轮补图；也可 `POST /api/covers/retry`（admin）手动强制重试。重试进度仅存内存，服务重启后重新计数。生成时未启用生图（无 `coverError` 的缺封面条目）不属于失败，不会被补图。
@@ -79,6 +79,8 @@ npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SS
 | `LLM_MODEL` | `gpt-4o-mini` | 模型名（无提供商配置时的兜底） |
 | `LLM_TIMEOUT_MS` | `60000` | 单次请求超时（自动重试一次） |
 | `LLM_IMAGE_TIMEOUT_MS` | `180000` | 生图（images/generations）单次请求超时（耗时明显高于对话，单独放宽） |
+| `LLM_IMAGE_CHAT_TIMEOUT_MS` | `1800000` | 生图 chat 兜底（流式）总预算：上游慢速图像模型经中转流式等待的上限（单张 24 分钟级场景需 30min） |
+| `LLM_IMAGE_CHAT_IDLE_MS` | `90000` | 生图 chat 兜底（流式）空闲看门狗：超过该时长无任何数据（含心跳）即判死；须大于中转心跳间隔、小于前置 CDN 空闲上限 |
 | `COVER_RETRY_INTERVAL_MINUTES` | `5` | 封面生图失败自动重试的检查间隔（分钟），同时是指数退避的基准单位（5→10→20…上限 1h） |
 | `COVER_RETRY_MAX_ATTEMPTS` | `6` | 封面自动重试的单条最大尝试次数，`0`=不限；达上限后不再自动重试，修正配置或 `POST /api/covers/retry` 可重来 |
 | `LLM_TEMPERATURE` | `0.9` | 采样温度 |

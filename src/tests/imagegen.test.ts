@@ -10,6 +10,9 @@ import test from 'node:test';
 // 在任何被测模块被调用之前指定独立的临时数据目录（惰性解析，见 AGENTS.md）
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'inspira-imagegen-'));
 process.env.LLM_API_KEY = 'sk-env-fallback-key'; // 证明 imagegen 不回退环境变量
+// 缩短流式看门狗：空闲 500ms / 总时长 3s，让 SSE 超时用例可快速断言（真实默认 90s / 30min）
+process.env.LLM_IMAGE_CHAT_IDLE_MS = '500';
+process.env.LLM_IMAGE_CHAT_TIMEOUT_MS = '3000';
 
 const llmcfg = await import('../llm-config.js');
 const { ImageGenNotConfiguredError, generateImage, resolveLlmTarget, sniffImageExt } = await import('../llm.js');
@@ -232,7 +235,7 @@ test('generateImage：images 端点 400（模型绑定对话端点）时自动 c
     assert.equal(Buffer.compare(r.bytes, JPEG_BYTES), 0);
     assert.equal(r.ext, 'jpg');
     assert.deepEqual(h.requests.map((q) => q.url), ['/v1/images/generations', '/v1/chat/completions']);
-    assert.deepEqual(h.requests[1]!.body, { model: 'img-model', messages: [{ role: 'user', content: 'prompt' }] });
+    assert.deepEqual(h.requests[1]!.body, { model: 'img-model', stream: true, messages: [{ role: 'user', content: 'prompt' }] });
   } finally {
     h.server.close();
     await assignImageGen(null);
@@ -259,6 +262,93 @@ test('generateImage：chat 兜底可解析 markdown 图片链接与裸 URL', asy
     const r = await generateImage('prompt');
     assert.equal(r.ext, 'webp');
     assert.ok(h.requests.some((q) => q.url === '/pic.webp'));
+  } finally {
+    h.server.close();
+    await assignImageGen(null);
+    for (const p of llmcfg.getLlmProviders()) await llmcfg.deleteLlmProvider(p.id);
+  }
+});
+
+test('generateImage：chat 兜底优先流式（SSE），心跳续命、最终 chunk 携带图片 markdown', async () => {
+  const h = await startServer((req, res, _body, hh) => {
+    if (req.method === 'POST' && req.url === '/v1/images/generations') {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{}');
+    } else if (req.method === 'POST' && req.url === '/v1/chat/completions') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+      // 模拟 flow2api 式流式协议：注释心跳 + reasoning_content 进度 + 最终 chunk 携带图片 markdown
+      res.write(': keepalive\n\n');
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: '图片生成任务已启动' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: '初始化生成环境...' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `![Generated Image](http://127.0.0.1:${hh.port}/pic.webp)` }, finish_reason: 'stop' }] })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } else if (req.url === '/pic.webp') {
+      res.writeHead(200, { 'content-type': 'image/webp' });
+      res.end(Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP')]));
+    } else { res.writeHead(404); res.end('{}'); }
+  });
+  try {
+    await llmcfg.saveLlmProvider({ id: 'ig', name: '生图中转', kind: 'openai_compat', apiKey: 'sk-imagegen-key', baseUrl: `http://127.0.0.1:${h.port}/v1`, models: ['img-model'] });
+    await assignImageGen('ig', 'img-model');
+    const r = await generateImage('prompt');
+    assert.equal(r.ext, 'webp');
+    // 兜底请求带 stream:true
+    const chatReq = h.requests.find((q) => q.url === '/v1/chat/completions')!;
+    assert.equal((chatReq.body as { stream?: boolean }).stream, true);
+    assert.ok(h.requests.some((q) => q.url === '/pic.webp'));
+  } finally {
+    h.server.close();
+    await assignImageGen(null);
+    for (const p of llmcfg.getLlmProviders()) await llmcfg.deleteLlmProvider(p.id);
+  }
+});
+
+test('generateImage：chat 兜底流式中途无数据 → 空闲超时如实报错', async () => {
+  const h = await startServer((req, res) => {
+    if (req.url === '/v1/images/generations') {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{}');
+    } else if (req.url === '/v1/chat/completions') {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(': keepalive\n\n'); // 之后不再有任何数据 → 500ms 空闲看门狗判死
+      setTimeout(() => { try { res.end(); } catch { /* 客户端已断开 */ } }, 800);
+    } else { res.writeHead(404); res.end('{}'); }
+  });
+  try {
+    await llmcfg.saveLlmProvider({ id: 'ig', name: '生图中转', kind: 'openai_compat', apiKey: 'sk-imagegen-key', baseUrl: `http://127.0.0.1:${h.port}/v1`, models: ['img-model'] });
+    await assignImageGen('ig', 'img-model');
+    await assert.rejects(
+      generateImage('prompt'),
+      (err: Error) => err.message.includes('chat 兜底也不可用') && err.message.includes('空闲超时'),
+    );
+  } finally {
+    h.server.close();
+    await assignImageGen(null);
+    for (const p of llmcfg.getLlmProviders()) await llmcfg.deleteLlmProvider(p.id);
+  }
+});
+
+test('generateImage：chat 兜底持续心跳但总时长超限 → 总预算超时报错', async () => {
+  const h = await startServer((req, res) => {
+    if (req.url === '/v1/images/generations') {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{}');
+    } else if (req.url === '/v1/chat/completions') {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      // 每 150ms 一个心跳，永不结束 → 3s 总预算判超（空闲看门狗不会误触发）
+      const t = setInterval(() => { try { res.write(': keepalive\n\n'); } catch { /* 客户端已断开 */ } }, 150);
+      res.on('close', () => clearInterval(t));
+      setTimeout(() => { try { res.end(); } catch { /* 客户端已断开 */ } }, 4000);
+    } else { res.writeHead(404); res.end('{}'); }
+  });
+  try {
+    await llmcfg.saveLlmProvider({ id: 'ig', name: '生图中转', kind: 'openai_compat', apiKey: 'sk-imagegen-key', baseUrl: `http://127.0.0.1:${h.port}/v1`, models: ['img-model'] });
+    await assignImageGen('ig', 'img-model');
+    await assert.rejects(
+      generateImage('prompt'),
+      (err: Error) => err.message.includes('chat 兜底也不可用') && err.message.includes('总时长超时'),
+    );
   } finally {
     h.server.close();
     await assignImageGen(null);

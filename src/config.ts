@@ -18,6 +18,12 @@ const schema = z.object({
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   // 生图（images/generations）耗时明显高于对话，单独放宽超时
   LLM_IMAGE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
+  // 生图 chat 兜底（流式）总预算：部分中转把图像模型只绑定在对话端点，且生成极慢
+  // （如 flow2api 单张约 24 分钟），必须流式等待——非流式会被前置 CDN 的空闲超时掐断
+  LLM_IMAGE_CHAT_TIMEOUT_MS: z.coerce.number().int().positive().default(1_800_000),
+  // 生图 chat 兜底（流式）空闲看门狗：超过该时长没有任何数据（含心跳）即判死；
+  // 须大于中转心跳间隔（如 flow2api 每 ≤15s 发 keepalive）、小于前置 CDN 空闲上限（如 Cloudflare 100s）
+  LLM_IMAGE_CHAT_IDLE_MS: z.coerce.number().int().positive().default(90_000),
   // 封面生图失败自动重试：检查间隔（分钟，同时是指数退避的基准单位）与单条最大尝试次数（0=不限）
   COVER_RETRY_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
   COVER_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(0).default(6),

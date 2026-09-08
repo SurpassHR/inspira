@@ -213,13 +213,16 @@ interface GeminiModelList { models?: { name?: string }[] }
 interface ImageGenItem { b64_json?: string | null; url?: string | null }
 interface ImageGenResponse { data?: ImageGenItem[] }
 /** chat 兜底响应：部分中转把图像模型绑定在 chat completions，图片出现在 message.images 或正文里 */
+interface ChatImageMessage {
+  content?: string | Array<{ type?: string; text?: string }> | null;
+  images?: { image_url?: { url?: string } }[];
+}
 interface ChatImageResponse {
-  choices?: {
-    message?: {
-      content?: string | Array<{ type?: string; text?: string }> | null;
-      images?: { image_url?: { url?: string } }[];
-    } | null;
-  }[];
+  choices?: { message?: ChatImageMessage | null }[];
+}
+/** SSE 流式 chunk：delta 或 message 携带增量内容与 images，finish_reason='stop' 表示完成 */
+interface SseChunk {
+  choices?: { delta?: ChatImageMessage; message?: ChatImageMessage; finish_reason?: string | null }[];
 }
 
 /** 供生图降级判定使用的错误：带 HTTP 状态（401 换路径无意义，不兜底） */
@@ -348,7 +351,7 @@ async function imagesEndpointGenerate(target: LlmTarget, prompt: string, timeout
 }
 
 /** chat 兜底时从回复正文中提取图片地址（data URI / markdown 图 / 裸图片 URL） */
-function extractImageUrls(message: NonNullable<NonNullable<ChatImageResponse['choices']>[number]['message']>): string[] {
+function extractImageUrls(message: ChatImageMessage): string[] {
   const urls: string[] = [];
   for (const img of message.images ?? []) {
     const u = img?.image_url?.url;
@@ -366,52 +369,161 @@ function extractImageUrls(message: NonNullable<NonNullable<ChatImageResponse['ch
   return urls;
 }
 
-/** 兜底路径：OpenAI 兼容 chat completions（gemini-*-image 等被中转绑定在对话端点的图像模型） */
+/**
+ * 流式（SSE）chat 兜底响应读取：逐事件累积 delta.content，最终 chunk 通常携带
+ * `![Generated Image](url)` 的 markdown；任何字节（含 `: keepalive` 心跳注释）都会
+ * 重置空闲看门狗——中途挂死（无数据）由 idle 计时器判超，总时长由外层 total 计时器兜底。
+ * 返回 true 的事件（finish_reason='stop' 或 [DONE]）即结束；流自然结束同样返回累积内容。
+ */
+async function streamChatContent(
+  res: Response,
+  opts: { idleMs: number; controller: AbortController },
+): Promise<{ content: string; images: { image_url?: { url?: string } }[] }> {
+  const { idleMs, controller } = opts;
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  const images: { image_url?: { url?: string } }[] = [];
+  let buf = '';
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const kick = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(new Error('chat-stream-idle')), idleMs);
+  };
+  const stop = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = null; };
+  /** 解析单个 SSE 事件；返回 true = 流已完成 */
+  const handleEvent = (event: string): boolean => {
+    for (const line of event.split('\n')) {
+      if (!line.startsWith('data:')) continue; // 注释/心跳等非 data 行直接忽略
+      const payload = line.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      let parsed: SseChunk | null = null;
+      try { parsed = JSON.parse(payload) as SseChunk; } catch { continue; }
+      const choice = parsed?.choices?.[0];
+      const delta = choice?.delta ?? choice?.message;
+      if (delta) {
+        if (typeof delta.content === 'string' && delta.content) chunks.push(delta.content);
+        if (delta.images?.length) images.push(...delta.images);
+      }
+      if (choice?.finish_reason === 'stop') return true;
+    }
+    return false;
+  };
+  try {
+    kick();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      kick();
+      buf += decoder.decode(value, { stream: true });
+      let idx = buf.indexOf('\n\n');
+      while (idx >= 0) {
+        const event = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        if (handleEvent(event)) { stop(); return { content: chunks.join(''), images }; }
+        idx = buf.indexOf('\n\n');
+      }
+    }
+    // 流结束但最后事件缺结尾空行：补一次解析
+    if (buf.trim()) handleEvent(buf);
+    stop();
+    return { content: chunks.join(''), images };
+  } catch (err) {
+    stop();
+    if (controller.signal.aborted) throw err; // 由调用方区分空闲/总时长/外部取消
+    throw new Error(`生图 chat 兜底流式响应中断：${describeError(err)}`);
+  }
+}
+
+/** 从 chat 兜底回复的 message（JSON 整体或流式累积结果）中解析并下载图片 */
+async function imageFromChatMessage(message: ChatImageMessage, timeoutMs: number, signal?: AbortSignal): Promise<{ bytes: Buffer; ext: string }> {
+  // 逐条尝试提取到的图片：失败时记下真实原因而不是吞掉，便于诊断中转/下载侧问题
+  let fetchError: Error | null = null;
+  for (const u of extractImageUrls(message)) {
+    let bytes: Buffer | null = null;
+    try {
+      bytes = u.startsWith('data:') ? decodeDataUrl(u) : await downloadImageBytes(u, timeoutMs, signal);
+    } catch (err) {
+      if (!fetchError) fetchError = err instanceof Error ? err : new Error(String(err));
+      continue;
+    }
+    if (bytes && bytes.length > 0) return { bytes, ext: sniffImageExt(bytes) };
+    if (!fetchError) fetchError = new Error('图片内容为空');
+  }
+  // 部分中转把整张图以纯 base64 文本放在正文里
+  let content = message.content;
+  if (Array.isArray(content)) content = content.map((p) => p?.text ?? '').join('\n');
+  if (typeof content === 'string' && /^[A-Za-z0-9+/=\s]{1024,}$/.test(content)) {
+    const bytes = Buffer.from(content.replace(/\s+/g, ''), 'base64');
+    if (bytes.length > 64) return { bytes, ext: sniffImageExt(bytes) };
+  }
+  if (fetchError) throw new Error(`生图 chat 兜底失败：回复含图片链接但获取失败：${fetchError.message}`);
+  const head = typeof content === 'string' && content ? `（内容开头：${bodyExcerpt(content)}）` : '';
+  throw new Error(`生图 chat 兜底失败：回复中未包含图片${head}`);
+}
+
+/**
+ * 兜底路径：OpenAI 兼容 chat completions（gemini-*-image 等被中转绑定在对话端点的图像模型）。
+ * 发送 stream:true——部分中转非流式会整体缓冲到生成完成才响应，被前置 CDN 空闲超时（如
+ * Cloudflare 100s）掐断成 524；流式则立即 200、以心跳续命、最终 chunk 携带图片 markdown。
+ * 总预算 LLM_IMAGE_CHAT_TIMEOUT_MS（默认 30min，覆盖单张 24 分钟级的上游）+ 空闲看门狗
+ * LLM_IMAGE_CHAT_IDLE_MS（默认 90s）；中转忽略 stream 直接回 JSON 时按旧逻辑解析。
+ */
 async function chatImageGenerate(target: LlmTarget, prompt: string, timeoutMs: number, signal?: AbortSignal): Promise<{ bytes: Buffer; ext: string }> {
+  const streamTotalMs = config.LLM_IMAGE_CHAT_TIMEOUT_MS;
+  const streamIdleMs = config.LLM_IMAGE_CHAT_IDLE_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const onOuterAbort = () => controller.abort();
   signal?.addEventListener('abort', onOuterAbort);
+  const totalTimer = setTimeout(() => controller.abort(new Error('chat-stream-total')), streamTotalMs);
   try {
     const res = await fetch(`${target.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${target.key}` },
-      body: JSON.stringify({ model: target.model, messages: [{ role: 'user', content: prompt }] }),
+      body: JSON.stringify({ model: target.model, stream: true, messages: [{ role: 'user', content: prompt }] }),
       signal: controller.signal,
     });
     if (!res.ok) throw imageHttpError(res.status, await readErrorBody(res, target.key), '生图 chat 兜底失败');
-    const data = (await res.json().catch(() => null)) as ChatImageResponse | null;
-    const message = data?.choices?.[0]?.message;
+    const contentType = res.headers.get('content-type') ?? '';
+    let message: ChatImageMessage | null = null;
+    if (!contentType.includes('application/json')) {
+      // 流式（SSE）：心跳续命，最终 chunk 的 delta.content 携带图片 markdown
+      const s = await streamChatContent(res, { idleMs: streamIdleMs, controller });
+      message = { content: s.content, images: s.images };
+    } else {
+      // 中转忽略 stream 参数、整体缓冲后回 JSON：按旧逻辑解析
+      const data = (await res.json().catch(() => null)) as ChatImageResponse | null;
+      message = data?.choices?.[0]?.message ?? null;
+    }
     if (!message) throw new Error('生图 chat 兜底失败：响应中没有 message');
-    // 逐条尝试提取到的图片：失败时记下真实原因而不是吞掉，便于诊断中转/下载侧问题
-    let fetchError: Error | null = null;
-    for (const u of extractImageUrls(message)) {
-      let bytes: Buffer | null = null;
-      try {
-        bytes = u.startsWith('data:') ? decodeDataUrl(u) : await downloadImageBytes(u, timeoutMs, signal);
-      } catch (err) {
-        if (!fetchError) fetchError = err instanceof Error ? err : new Error(String(err));
-        continue;
-      }
-      if (bytes && bytes.length > 0) return { bytes, ext: sniffImageExt(bytes) };
-      if (!fetchError) fetchError = new Error('图片内容为空');
+    clearTimeout(totalTimer);
+    // 图片下载阶段单独计时（不占用流式总预算）
+    const dl = new AbortController();
+    const dlTimer = setTimeout(() => dl.abort(), timeoutMs);
+    const onOuterAbortDl = () => dl.abort();
+    signal?.addEventListener('abort', onOuterAbortDl);
+    try {
+      return await imageFromChatMessage(message, timeoutMs, dl.signal);
+    } finally {
+      clearTimeout(dlTimer);
+      signal?.removeEventListener('abort', onOuterAbortDl);
     }
-    // 部分中转把整张图以纯 base64 文本放在正文里
-    let content = message.content;
-    if (Array.isArray(content)) content = content.map((p) => p?.text ?? '').join('\n');
-    if (typeof content === 'string' && /^[A-Za-z0-9+/=\s]{1024,}$/.test(content)) {
-      const bytes = Buffer.from(content.replace(/\s+/g, ''), 'base64');
-      if (bytes.length > 64) return { bytes, ext: sniffImageExt(bytes) };
-    }
-    if (fetchError) throw new Error(`生图 chat 兜底失败：回复含图片链接但获取失败：${fetchError.message}`);
-    const head = typeof content === 'string' && content ? `（内容开头：${bodyExcerpt(content)}）` : '';
-    throw new Error(`生图 chat 兜底失败：回复中未包含图片${head}`);
   } catch (err) {
-    if ((err as Error).name === 'AbortError' && !signal?.aborted) throw new Error(`生图 chat 兜底超时（${timeoutMs / 1000}s）`);
+    if (controller.signal.aborted) {
+      if (signal?.aborted) throw err; // 外部取消原样透传
+      const reason = controller.signal.reason;
+      if (reason instanceof Error && reason.message === 'chat-stream-idle') {
+        throw new Error(`生图 chat 兜底失败：流式响应空闲超时（${streamIdleMs / 1000}s 无数据，可调 LLM_IMAGE_CHAT_IDLE_MS）`);
+      }
+      if (reason instanceof Error && reason.message === 'chat-stream-total') {
+        throw new Error(`生图 chat 兜底失败：流式响应总时长超时（${streamTotalMs / 1000}s，可调 LLM_IMAGE_CHAT_TIMEOUT_MS）`);
+      }
+    }
+    if ((err as Error).name === 'AbortError' && !signal?.aborted) throw new Error(`生图 chat 兜底超时（${streamTotalMs / 1000}s）`);
     if (err instanceof Error && /^生图/.test(err.message)) throw err;
     throw new Error(`生图 chat 兜底失败：${describeError(err)}${tlsCauseHint(err)}`);
   } finally {
-    clearTimeout(timer);
+    clearTimeout(totalTimer);
     signal?.removeEventListener('abort', onOuterAbort);
   }
 }
