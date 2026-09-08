@@ -14,13 +14,13 @@ const DEFAULT_THEMES = ['general', 'nature', 'technology', 'fashion', 'surreal',
 /** 默认风格库（注入图像与视频参考画面提示词；激活子集可为空 = 不注入风格）。导出供后台页面兜底展示复用 */
 export const DEFAULT_STYLES = ['photorealistic', 'cinematic', 'anime', 'watercolor', '3D render', 'minimalist'];
 
-/** 规范化 override 提示词映射：只保留 keys 中的成员、去首尾空白、剔除空串、截断超长（2000） */
+/** 规范化 override 提示词映射：只保留 keys 中的成员、去首尾空白、剔除空串、截断超长（5000） */
 function cleanOverrides(raw: unknown, keys: string[]): Record<string, string> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const out: Record<string, string> = {};
   for (const k of Object.keys(raw)) {
     if (!keys.includes(k)) continue;
-    const v = String((raw as Record<string, unknown>)[k]).trim().slice(0, 2000);
+    const v = String((raw as Record<string, unknown>)[k]).trim().slice(0, 5000);
     if (v) out[k] = v;
   }
   return out;
