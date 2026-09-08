@@ -2,6 +2,7 @@
  *  布局：左侧导航 + 顶栏（用户/角色/修改密码/退出）+ 内容区各区块：
  *  总览 / 灵感 / 生成设置 / LLM 配置 / 采集源 /（admin）账号与权限。
  *  全部控件自绘（txtbox/stepper/switch/select/seg），无原生控件外观；所有动态注入经 esc() 转义。 */
+import { buildTagHtml } from './buildinfo.js';
 import type { PublicUser } from './types.js';
 import { DEFAULT_STYLES } from './store.js';
 import { uiCss, utilClientJs } from './ui.js';
@@ -33,7 +34,7 @@ ${authStyle()}
 <body>
 <div class="auth">
   <div class="modal">
-    <div class="brand"><span class="dot"></span>Inspira <span style="color:var(--faint);font-size:12px">后台管理</span></div>
+    <div class="brand"><span class="dot"></span>Inspira${buildTagHtml()} <span style="color:var(--faint);font-size:12px">后台管理</span></div>
     <div class="cb-hint" style="margin:0 0 18px;font-size:12px;color:var(--muted)">${sub}</div>
     <div class="err" id="err"></div>
     <div class="field">
@@ -167,6 +168,7 @@ body{overflow:hidden}
 .kv{display:flex;align-items:baseline;gap:8px;font-size:12.5px;margin:5px 0}
 .kv .k{color:var(--faint);flex:none;min-width:70px}
 .kv .v2{color:#d4d4d8}
+.kv .v2.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
 .tasklist{display:flex;flex-direction:column;gap:5px;font-size:12px}
 .tasklist .trow{display:flex;gap:8px;align-items:baseline}
 .tasklist .tk{color:var(--faint);width:52px;flex:none}
@@ -215,7 +217,7 @@ body{overflow:hidden}
 
 <div class="adm">
   <aside class="anav">
-    <div class="alogo"><span class="dot"></span>Inspira <em>后台管理</em></div>
+    <div class="alogo"><span class="dot"></span>Inspira${buildTagHtml()} <em>后台管理</em></div>
     <button class="ai on" data-sec="overview" type="button"><span class="aico">◉</span>总览</button>
     <button class="ai" data-sec="insp" type="button"><span class="aico">🖼</span>灵感</button>
     <button class="ai" data-sec="gen" type="button"><span class="aico">⚙</span>生成设置</button>
@@ -242,6 +244,14 @@ body{overflow:hidden}
       <!-- ==================== 总览 ==================== -->
       <section class="sec on" id="sec-overview">
         <div class="stats" id="ovStats"></div>
+        <div class="ocard">
+          <h3>版本</h3>
+          <div class="kv"><span class="k">commit</span><span class="v2 mono" id="ovCommit"></span></div>
+          <div class="kv"><span class="k">分支</span><span class="v2" id="ovBranch"></span></div>
+          <div class="kv"><span class="k">运行模式</span><span class="v2" id="ovMode"></span></div>
+          <div class="kv"><span class="k">Node</span><span class="v2" id="ovNode"></span></div>
+          <div class="kv"><span class="k">启动时间</span><span class="v2" id="ovStarted"></span></div>
+        </div>
         <div class="ocard" data-jump="gen">
           <h3>生成调度</h3>
           <div class="kv"><span class="k">自动生成</span><span class="v2" id="ovSched"></span></div>
@@ -884,6 +894,15 @@ async function loadOverview(){
       statTile('视频',st.video)+
       statTile('失败',st.failed,st.failed>0);
     if(h){
+      const v=h.version;
+      if(v){
+        $('#ovCommit').textContent=v.commit?v.commit.slice(0,7):'—';
+        $('#ovCommit').title=v.commit?('构建基于 commit '+v.commit+(v.branch?'（分支 '+v.branch+'）':'')):'';
+        $('#ovBranch').textContent=v.branch||'—';
+        $('#ovMode').textContent=v.mode==='tsx'?'tsx（源码运行）':v.mode==='dist'?'dist（编译产物）':'未知';
+        $('#ovNode').textContent=v.node;
+        $('#ovStarted').textContent=fmt(v.startedAt);
+      }
       $('#ovSched').innerHTML=h.scheduler.enabled?'<b style="color:var(--ok)">开启</b> · 间隔 '+h.scheduler.intervalMinutes+' 分钟':'<b style="color:var(--bad)">已关闭</b>';
       $('#ovNext').textContent=h.scheduler.nextRunAt?fmt(h.scheduler.nextRunAt):'—';
       const per=h.llmTasks||{};

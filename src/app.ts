@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { getVersionInfo } from './buildinfo.js';
 import { coverRetryCandidates, resetCoverRetryState, retryFailedCovers } from './cover-retry.js';
 import { dashboardHtml } from './dashboard.js';
 import { attachLiveReload, devBadgeHtml, liveReloadScript } from './livereload.js';
@@ -317,6 +318,7 @@ app.get('/api/health', (c) => {
   if (!userOf(c)) return unauthorized(c);
   return c.json({
     ok: true,
+    version: getVersionInfo(),
     llmConfigured: llmReady(),
     llm: activeLlmTarget(),
     llmTasks: activeTaskTargets(),

@@ -10,6 +10,7 @@
  *    高度漂移触发的重新分列去抖到滚动停歇后执行，且只移动换列的槽位。
  * 管理功能（设置 / LLM 配置 / 生成 / 清理）全部在 /admin（需登录）。
  */
+import { buildTagHtml } from './buildinfo.js';
 import { uiCss, utilClientJs } from './ui.js';
 
 export function dashboardHtml(): string {
@@ -81,7 +82,7 @@ a.btn{display:inline-flex;align-items:center;justify-content:center;text-decorat
 <body>
 
 <header class="top">
-  <div class="brand"><span class="dot"></span>Inspira</div>
+  <div class="brand"><span class="dot"></span>Inspira${buildTagHtml()}</div>
   <span class="link">创意灵感生成 · 只产提示词</span>
   <div class="spacer"></div>
   <a class="btn ghost" href="/admin">管理后台</a>

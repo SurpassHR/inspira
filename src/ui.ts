@@ -20,6 +20,8 @@ h2,h3{margin:0}
 .top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;padding:0 22px;height:56px;background:rgba(10,10,10,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--bd)}
 .brand{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;letter-spacing:.2px}
 .brand .dot{width:8px;height:8px;border-radius:50%;background:var(--acc-deep);box-shadow:0 0 10px var(--acc-deep)}
+/* 构建 commit 徽标（等宽短 hash，tooltip 详情） */
+.btag{display:inline-flex;align-items:center;padding:1px 7px;border:1px solid var(--bd);border-radius:999px;font:500 10px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:0;color:var(--faint);cursor:default}
 .top .spacer{flex:1}
 .top .link{color:var(--muted);font-size:12.5px}
 .btn{background:var(--acc-deep);color:#fff;padding:7px 14px;font-size:13px}

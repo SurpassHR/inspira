@@ -42,14 +42,19 @@ test('未登录访问管理 API 一律 401（匿名不可写/不可读管理信�
   }
 });
 
-test('GET /api/health 反映未配置 LLM、调度信息与当前采集源', async () => {
+test('GET /api/health 反映未配置 LLM、调度信息、版本信息与当前采集源', async () => {
   const res = await app.request('/api/health', { headers: await hdr() });
-  const h = await res.json() as { llmConfigured: boolean; scheduler: { enabled: boolean; intervalMinutes: number }; scrape: { providers: string[]; xConfigured: boolean } };
+  const h = await res.json() as { llmConfigured: boolean; scheduler: { enabled: boolean; intervalMinutes: number }; scrape: { providers: string[]; xConfigured: boolean }; version: { commit: string | null; branch: string | null; mode: string; node: string; startedAt: string } };
   assert.equal(h.llmConfigured, false);
   assert.equal(h.scheduler.enabled, true);
   assert.ok(h.scheduler.intervalMinutes > 0);
   assert.ok(Array.isArray(h.scrape.providers) && h.scrape.providers.length > 0);
   assert.equal(typeof h.scrape.xConfigured, 'boolean');
+  // 版本信息：commit 在 git 检出内应为 40 位 hash，模式/Node/启动时间齐备
+  if (h.version.commit !== null) assert.match(h.version.commit, /^[0-9a-f]{40}$/i);
+  assert.ok(['tsx', 'dist', 'unknown'].includes(h.version.mode), 'mode 应为 tsx/dist/unknown');
+  assert.match(h.version.node, /^v\d+/);
+  assert.ok(!Number.isNaN(Date.parse(h.version.startedAt)), 'startedAt 应为合法时间');
 });
 
 test('PUT /api/source-config：合法保存生效，非法 400，持久化可读回', async () => {
