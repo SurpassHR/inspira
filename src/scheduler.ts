@@ -2,6 +2,7 @@ import { config } from './config.js';
 import { resetCoverRetryState, retryFailedCovers, startCoverRetryTimer } from './cover-retry.js';
 import { createSeed, generateInspiration } from './generator.js';
 import { pruneOrphanImages } from './images.js';
+import { resetInspirationRetryState, retryFailedInspirations, startInspirationRetryTimer } from './inspiration-retry.js';
 import { llmReady } from './llm.js';
 import { store } from './store.js';
 
@@ -33,6 +34,10 @@ export function restartScheduler(): void {
   resetCoverRetryState();
   void retryFailedCovers();
   startCoverRetryTimer(); // 按当前设置的间隔重建补图定时器（设置变更后新间隔即时生效）
+  // 同样的逻辑用于失败提示词重试：清退避进度 + 立即补一轮 + 按新间隔重建定时器
+  resetInspirationRetryState();
+  void retryFailedInspirations();
+  startInspirationRetryTimer();
   if (timer) { clearTimeout(timer); timer = undefined; }
   nextRunAt = null;
   const settings = store.getSettings();

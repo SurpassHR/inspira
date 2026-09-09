@@ -5,7 +5,7 @@ import { ImageGenNotConfiguredError } from '../llm.js';
 import type { InspirationSettings, InspirationSource } from '../types.js';
 
 const settings: InspirationSettings = {
-  intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, enabled: true, themes: ['自然', '科技'], activeThemes: ['自然'],
+  intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, retryIntervalMinutes: 15, enabled: true, themes: ['自然', '科技'], activeThemes: ['自然'],
   styles: ['anime', 'watercolor'], activeStyles: ['anime'],
   kinds: ['image', 'video'], sources: ['hot_topic', 'hot_image', 'original_idea'],
 };
@@ -55,7 +55,7 @@ test('idea 双行格式：解析出短标题 title，prompt 阶段仍接收完�
 
 test('createSeed 只从已激活主题子集随机取（未勾选的不参与）', () => {
   const s: InspirationSettings = {
-    intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, enabled: true, themes: ['山水', '机甲'], activeThemes: ['山水'],
+    intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, retryIntervalMinutes: 15, enabled: true, themes: ['山水', '机甲'], activeThemes: ['山水'],
     styles: ['anime'], activeStyles: ['anime'],
     kinds: ['image'], sources: ['original_idea'],
   };
@@ -69,7 +69,7 @@ test('createSeed 只从已激活主题子集随机取（未勾选的不参与）
 
 test('createSeed 风格从激活子集随机取；全部取消时 style 为 undefined（不回退全库）', () => {
   const base: InspirationSettings = {
-    intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, enabled: true, themes: ['a'], activeThemes: ['a'],
+    intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, retryIntervalMinutes: 15, enabled: true, themes: ['a'], activeThemes: ['a'],
     styles: ['anime', 'noir'], activeStyles: ['noir'],
     kinds: ['image'], sources: ['original_idea'],
   };
@@ -84,7 +84,7 @@ test('createSeed 风格从激活子集随机取；全部取消时 style 为 unde
 
 test('createSeed 画面比例：图像灵感随机取且在池内；视频灵感不抽比例（固定 16:9）', () => {
   const img: InspirationSettings = {
-    intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, enabled: true, themes: ['a'], activeThemes: ['a'],
+    intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, retryIntervalMinutes: 15, enabled: true, themes: ['a'], activeThemes: ['a'],
     styles: [], activeStyles: [],
     kinds: ['image'], sources: ['original_idea'],
   };

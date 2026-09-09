@@ -30,6 +30,10 @@ const schema = z.object({
   COVER_RETRY_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
   COVER_RETRY_DELAY_SECONDS: z.coerce.number().int().min(0).default(30),
   COVER_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(0).default(6),
+  // 提示词生成失败自动重试：检查间隔（分钟，同时是指数退避的基准单位）与单条最大尝试次数（0=不限）。
+  // 运行期可在「生成设置」界面覆盖间隔（持久化到 settings）；这里作为默认值
+  RETRY_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
+  RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(0).default(6),
   LLM_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.9),
   LLM_MAX_TOKENS: z.coerce.number().int().positive().default(2000),
 

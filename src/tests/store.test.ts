@@ -8,7 +8,7 @@ const dir = await mkdtemp(join(tmpdir(), 'inspira-store-'));
 process.env.DATA_DIR = dir;
 
 const { store, initStore } = await import('../store.js');
-const settings = { intervalMinutes: 15, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, enabled: false, themes: ['nature', 'general'], activeThemes: ['nature'], styles: ['anime', 'noir'], activeStyles: ['noir'], kinds: ['video'] as const, sources: ['original_idea'] as const };
+const settings = { intervalMinutes: 15, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, retryIntervalMinutes: 15, enabled: false, themes: ['nature', 'general'], activeThemes: ['nature'], styles: ['anime', 'noir'], activeStyles: ['noir'], kinds: ['video'] as const, sources: ['original_idea'] as const };
 
 async function fresh(): Promise<typeof import('../store.js')> {
   return import(`../store.js?reload=${Date.now()}-${Math.random()}`) as Promise<typeof import('../store.js')>;

@@ -339,6 +339,15 @@ body{overflow:hidden}
               </div>
               <div class="cb-hint">轮内相邻两张封面间的等待，0–3600 秒，步进 10</div>
             </div>
+            <div class="field" style="flex:0 0 148px">
+              <label class="f">失败重试间隔（分钟）</label>
+              <div class="stepper" id="retryStepper">
+                <button class="step" data-d="-5" type="button" aria-label="减少 5 分钟">−</button>
+                <div class="step-val" contenteditable="true" role="textbox" aria-label="失败重试间隔分钟"></div>
+                <button class="step" data-d="5" type="button" aria-label="增加 5 分钟">+</button>
+              </div>
+              <div class="cb-hint">提示词生成失败自动重试的检查间隔，也是退避基准</div>
+            </div>
           </div>
           <div class="sw" id="enabledSw" role="switch" aria-checked="true" tabindex="0">
             <span class="track"><span class="knob"></span></span>
@@ -1223,6 +1232,7 @@ const styleEd=makeTagEditor({list:$('#styleList'),input:styleNew,hint:$('#styleH
 const intervalStepper=makeStepper($('#intervalStepper'));
 const coverRetryStepper=makeStepper($('#coverRetryStepper'));
 const coverDelayStepper=makeStepper($('#coverDelayStepper'),{step:10,min:0,max:3600});
+const retryStepper=makeStepper($('#retryStepper'));
 const enabledSw=makeSwitch($('#enabledSw'));
 let kinds=['image','video'],sources=['hot_topic','hot_image','original_idea'];
 function renderKindsChips(){document.querySelectorAll('#sec-gen .chip[data-g]').forEach(ch=>{
@@ -1241,10 +1251,10 @@ function setEq(a,b){if(a.length!==b.length)return false;
   const n=x=>JSON.stringify(x.map(v=>String(v).toLowerCase()).sort());
   return n(a)===n(b);}
 function ovrEq(a,b){const ka=Object.keys(a),kb=Object.keys(b);if(ka.length!==kb.length)return false;return ka.every(k=>a[k]===b[k]);}
-function captureGenBase(){genBase={interval:intervalStepper.get(),coverRetry:coverRetryStepper.get(),coverDelay:coverDelayStepper.get(),enabled:enabledSw.get(),themes:themeEd.items,activeThemes:themeEd.active,styles:styleEd.items,activeStyles:styleEd.active,themeOverrides:themeEd.overrides,styleOverrides:styleEd.overrides,kinds:kinds.slice(),sources:sources.slice()};}
+function captureGenBase(){genBase={interval:intervalStepper.get(),coverRetry:coverRetryStepper.get(),coverDelay:coverDelayStepper.get(),retry:retryStepper.get(),enabled:enabledSw.get(),themes:themeEd.items,activeThemes:themeEd.active,styles:styleEd.items,activeStyles:styleEd.active,themeOverrides:themeEd.overrides,styleOverrides:styleEd.overrides,kinds:kinds.slice(),sources:sources.slice()};}
 function genDirty(){
   if(!genBase)return false;
-  return genBase.interval!==intervalStepper.get()||genBase.coverRetry!==coverRetryStepper.get()||genBase.coverDelay!==coverDelayStepper.get()||genBase.enabled!==enabledSw.get()||
+  return genBase.interval!==intervalStepper.get()||genBase.coverRetry!==coverRetryStepper.get()||genBase.coverDelay!==coverDelayStepper.get()||genBase.retry!==retryStepper.get()||genBase.enabled!==enabledSw.get()||
     !arrEq(genBase.themes,themeEd.items)||!setEq(genBase.activeThemes,themeEd.active)||
     !arrEq(genBase.styles,styleEd.items)||!setEq(genBase.activeStyles,styleEd.active)||
     !ovrEq(genBase.themeOverrides,themeEd.overrides)||!ovrEq(genBase.styleOverrides,styleEd.overrides)||
@@ -1252,7 +1262,7 @@ function genDirty(){
 }
 function applyGenBase(){
   if(!genBase)return;
-  intervalStepper.set(genBase.interval);coverRetryStepper.set(genBase.coverRetry);coverDelayStepper.set(genBase.coverDelay);enabledSw.set(genBase.enabled);
+  intervalStepper.set(genBase.interval);coverRetryStepper.set(genBase.coverRetry);coverDelayStepper.set(genBase.coverDelay);retryStepper.set(genBase.retry);enabledSw.set(genBase.enabled);
   themeEd.set(genBase.themes,genBase.activeThemes,genBase.themeOverrides);
   styleEd.set(genBase.styles,genBase.activeStyles,genBase.styleOverrides);
   kinds=genBase.kinds.slice();sources=genBase.sources.slice();
@@ -1261,7 +1271,7 @@ function applyGenBase(){
 async function saveGenAsk(){
   try{
     await jf('/api/settings',{method:'PUT',headers:{'content-type':'application/json'},
-      body:JSON.stringify({intervalMinutes:intervalStepper.get(),coverRetryIntervalMinutes:coverRetryStepper.get(),coverRetryDelaySeconds:coverDelayStepper.get(),enabled:enabledSw.get(),themes:themeEd.items,activeThemes:themeEd.active,styles:styleEd.items,activeStyles:styleEd.active,themeOverrides:themeEd.overrides,styleOverrides:styleEd.overrides,kinds,sources})});
+      body:JSON.stringify({intervalMinutes:intervalStepper.get(),coverRetryIntervalMinutes:coverRetryStepper.get(),coverRetryDelaySeconds:coverDelayStepper.get(),retryIntervalMinutes:retryStepper.get(),enabled:enabledSw.get(),themes:themeEd.items,activeThemes:themeEd.active,styles:styleEd.items,activeStyles:styleEd.active,themeOverrides:themeEd.overrides,styleOverrides:styleEd.overrides,kinds,sources})});
     toast('已保存设置');
     captureGenBase();refreshAsk();
     return true;
@@ -1280,7 +1290,7 @@ async function loadSettings(){
     const stA=Array.isArray(s.activeStyles)?s.activeStyles.filter(t=>st.includes(t)):[...st];
     const ovSt=(s.styleOverrides&&typeof s.styleOverrides==='object')?Object.fromEntries(Object.entries(s.styleOverrides).filter(([k])=>st.includes(k))):{};
     styleEd.set(st,stA,ovSt);
-    intervalStepper.set(s.intervalMinutes);coverRetryStepper.set(s.coverRetryIntervalMinutes||15);coverDelayStepper.set(s.coverRetryDelaySeconds??30);enabledSw.set(s.enabled);
+    intervalStepper.set(s.intervalMinutes);coverRetryStepper.set(s.coverRetryIntervalMinutes||15);coverDelayStepper.set(s.coverRetryDelaySeconds??30);retryStepper.set(s.retryIntervalMinutes||15);enabledSw.set(s.enabled);
     kinds=s.kinds.slice();sources=s.sources.slice();
     renderKindsChips();
     captureGenBase();refreshAsk();

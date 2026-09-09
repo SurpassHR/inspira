@@ -163,6 +163,7 @@ test('viewer：管理 GET 可读、写操作一律 403、提供商列表不含�
     ['PUT', '/api/llm/assignments', {}],
     ['POST', '/api/generate', null],
     ['POST', '/api/covers/retry', null],
+    ['POST', '/api/inspirations/retry', null],
     ['DELETE', '/api/inspirations', null],
     ['DELETE', '/api/inspirations/whatever', null],
   ] as const) {

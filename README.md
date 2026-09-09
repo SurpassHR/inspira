@@ -68,6 +68,7 @@ npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SS
 - **产物与展示**：图片保存为 `DATA_DIR/images/{灵感 id}.{png|jpg|webp|gif}`（按魔数识别格式），经 `GET /api/images/:name` 提供给卡片封面（长缓存）。画廊卡片展示 **sharp 压缩缩略图** `{id}.thumb.jpg`（宽 480px JPEG 约 1/10 体积，随封面自动生成、缺失时按需懒生成并落盘缓存、解码失败回退原图），**点击卡片灯箱加载原图**；后台详情弹窗亦展示原图。灵感记录中新增 `cover` 字段；历史记录不会补生图。
 - **失败与清理**：生图超时默认 180s（`LLM_IMAGE_TIMEOUT_MS` 可调），失败只记 `coverError`（卡片占位图悬停可见原因），不影响 status=ready 的提示词；灵感被清空/淘汰后封面文件随孤儿清理自动删除。
 - **失败自动重试**：生图失败的条目（有 `coverError` 且无 `cover`）会被自动补生图——独立定时器每 `COVER_RETRY_INTERVAL_MINUTES` 分钟（默认 15，可在后台「生成设置 → 封面补图间隔」调整，修改即生效）检查一次，按指数退避（15min → 30min → 1h → … 上限 1h）重试，单条最多 `COVER_RETRY_MAX_ATTEMPTS` 次（`0`=不限）。一轮内相邻两张之间默认等待 30 秒（`COVER_RETRY_DELAY_SECONDS`，后台「生成设置 → 补图间隔（秒）」可调，`0`=不等待），避免连续撞生图配额。成功后写回封面并清除 `coverError`。修正生图配置（提供商/模型分配/设置保存）会立即触发一轮补图；也可 `POST /api/covers/retry`（admin）手动强制重试。重试进度仅存内存，服务重启后重新计数。生成时未启用生图（无 `coverError` 的缺封面条目）不属于失败，不会被补图。
+- **提示词失败自动重试**：`status=failed` 的条目（点子/提示词生成失败，图像与视频均覆盖）与封面失败同样处理——独立定时器每 `RETRY_INTERVAL_MINUTES` 分钟（默认 15，可在后台「生成设置 → 失败重试间隔」调整，修改即生效）检查一次，按指数退避（15min → 30min → 1h → … 上限 1h）**重走完整生成管线**（素材 → 点子 → 提示词 → 封面），成功后恢复为 `ready` 并清空 `error`；单条最多 `RETRY_MAX_ATTEMPTS` 次（默认 6，`0`=不限）。未配置 LLM 时整轮跳过（不计次数）。修正配置（提供商/分配/设置保存）会立即触发一轮；也可 `POST /api/inspirations/retry`（admin）手动强制重试。重试进度仅存内存，服务重启后重新计数。与失败记录保留策略（`FAILED_RETENTION_HOURS`，默认 24h）配合：已被清理的失败条目不再重试，重试失败会刷新保留窗口。
 
 ## 环境变量
 
@@ -84,6 +85,8 @@ npm run dev            # 开发模式：tsx watch 后端自动重启 + 页面 SS
 | `COVER_RETRY_INTERVAL_MINUTES` | `15` | 封面生图失败自动重试的检查间隔（分钟），同时是指数退避的基准单位（15→30→60…上限 1h）；可在后台「生成设置 → 封面补图间隔」覆盖（持久化到 settings） |
 | `COVER_RETRY_DELAY_SECONDS` | `30` | 补图轮内相邻两张之间的等待间隔（秒，`0`=不等待）；可在后台「生成设置 → 补图间隔（秒）」覆盖（持久化到 settings） |
 | `COVER_RETRY_MAX_ATTEMPTS` | `6` | 封面自动重试的单条最大尝试次数，`0`=不限；达上限后不再自动重试，修正配置或 `POST /api/covers/retry` 可重来 |
+| `RETRY_INTERVAL_MINUTES` | `15` | 提示词生成失败（`status=failed`）自动重试的检查间隔（分钟），同时是指数退避的基准单位（15→30→60…上限 1h）；可在后台「生成设置 → 失败重试间隔」覆盖（持久化到 settings） |
+| `RETRY_MAX_ATTEMPTS` | `6` | 提示词失败自动重试的单条最大尝试次数，`0`=不限；达上限后不再自动重试，修正配置或 `POST /api/inspirations/retry` 可重来 |
 | `LLM_TEMPERATURE` | `0.9` | 采样温度 |
 | `LLM_MAX_TOKENS` | `2000` | 输出上限 |
 | `HOT_TOPICS_URL` | 内置 GitHub 热门 | JSON 数组 `{title, summary?, url?}`，兼容 `{items:[...]}` / `{data:[...]}`；内置源动态计算 `created:>近7天` 的 ISO 日期（GitHub 不接受 `7days` 这类相对天数） |
@@ -256,6 +259,7 @@ NODE_TLS_REJECT_UNAUTHORIZED=0 npm start
 | PUT | `/api/llm/assignments` | admin | 保存分配（校验提供商与模型存在） |
 | GET | `/api/images/:name` | 公开 | 灵感封面图（`DATA_DIR/images/`，按魔数识别 content-type，长缓存） |
 | POST | `/api/generate` | admin | 立即生成一条（返回 `202 {id}`，轮询查询进度） |
+| POST | `/api/inspirations/retry` | admin | 手动重试全部失败提示词（忽略退避立即重试，返回本轮尝试/恢复/剩余计数） |
 | GET | `/api/inspirations?limit=&kind=&source=` | 公开 | 灵感历史（默认 50，上限 100） |
 | GET | `/api/inspirations/:id` | 公开 | 单条灵感 |
 | GET | `/api/inspirations/stats` | 登录 | 全库统计（总览用：图像/视频/排队/失败等） |

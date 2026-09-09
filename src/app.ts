@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { getVersionInfo } from './buildinfo.js';
 import { coverRetryCandidates, resetCoverRetryState, retryFailedCovers } from './cover-retry.js';
+import { inspirationRetryCandidates, resetInspirationRetryState, retryFailedInspirations } from './inspiration-retry.js';
 import { dashboardHtml } from './dashboard.js';
 import { attachLiveReload, devBadgeHtml, liveReloadScript } from './livereload.js';
 import { describeError } from './errors.js';
@@ -448,6 +449,15 @@ app.post('/api/covers/retry', async (c) => {
   resetCoverRetryState();
   const r = await retryFailedCovers({ force: true });
   return c.json({ retried: r.retried, recovered: r.recovered, remaining: coverRetryCandidates().length });
+});
+
+/** 手动重试失败提示词：忽略退避立即重试全部候选，返回本轮尝试/恢复条数与剩余失败数（admin） */
+app.post('/api/inspirations/retry', async (c) => {
+  const u = adminOf(c);
+  if (!u) return userOf(c) ? forbidden(c) : unauthorized(c);
+  resetInspirationRetryState();
+  const r = await retryFailedInspirations({ force: true });
+  return c.json({ retried: r.retried, recovered: r.recovered, remaining: inspirationRetryCandidates().length });
 });
 
 app.delete('/api/inspirations', async (c) => {

@@ -5,6 +5,8 @@ export const settingsSchema = z.object({
   coverRetryIntervalMinutes: z.number().int().min(1).max(10080),
   // 补图轮内相邻两张的等待间隔（秒）：0=不等待，避免连续撞生图配额
   coverRetryDelaySeconds: z.number().int().min(0).max(3600),
+  // 提示词生成失败自动重试的检查间隔（分钟），同时是指数退避的基准单位
+  retryIntervalMinutes: z.number().int().min(1).max(10080),
   enabled: z.boolean(),
   themes: z.array(z.string().trim().min(1).max(100)).min(1),
   activeThemes: z.array(z.string().trim().min(1).max(100)).min(1),

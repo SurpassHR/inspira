@@ -98,7 +98,7 @@ test('PUT /api/settings 拒绝非法输入', async () => {
 
 test('PUT /api/settings 接受 activeStyles 为空数组（= 不指定风格）', async () => {
   const H = await hdr();
-  const ok = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime', 'noir'], activeStyles: [], kinds: ['image'], sources: ['original_idea'] }) });
+  const ok = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, retryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime', 'noir'], activeStyles: [], kinds: ['image'], sources: ['original_idea'] }) });
   assert.equal(ok.status, 200);
   const saved = await ok.json() as { styles: string[]; activeStyles: string[] };
   assert.deepEqual(saved.styles, ['anime', 'noir']);
@@ -107,7 +107,7 @@ test('PUT /api/settings 接受 activeStyles 为空数组（= 不指定风格）'
 
 test('PUT /api/settings 接受 themeOverrides/styleOverrides 并校验键须为库内成员', async () => {
   const H = await hdr();
-  const base = { intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime', 'noir'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] };
+  const base = { intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, retryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime', 'noir'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] };
   const badTheme = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ ...base, themeOverrides: { ghost: 'X' } }) });
   assert.equal(badTheme.status, 400, 'themeOverrides 键必须在 themes 内');
   const badStyle = await app.request('/api/settings', { method: 'PUT', headers: H, body: JSON.stringify({ ...base, styleOverrides: { watercolor: 'S' } }) });
@@ -127,7 +127,7 @@ test('生成流程：未配置 LLM 时状态流转 queued → failed 且错误�
   const H = await hdr();
   const put = await app.request('/api/settings', {
     method: 'PUT', headers: H,
-    body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }),
+    body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, retryIntervalMinutes: 15, enabled: true, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }),
   });
   assert.equal(put.status, 200);
 
@@ -155,6 +155,18 @@ test('生成流程：未配置 LLM 时状态流转 queued → failed 且错误�
     assert.ok(!it.prompt.includes('PRIMARY LANGUAGE RULE'));
     assert.ok(!it.prompt.includes('text-to-image models'));
   }
+});
+
+test('POST /api/inspirations/retry：未配置 LLM 时整轮跳过，返回零计数与剩余失败数', async () => {
+  const H = await hdr();
+  const res = await app.request('/api/inspirations/retry', { method: 'POST', headers: H });
+  assert.equal(res.status, 200);
+  const body = await res.json() as { retried: number; recovered: number; remaining: number };
+  assert.deepEqual({ retried: body.retried, recovered: body.recovered }, { retried: 0, recovered: 0 });
+  // 上一用例生成的失败条目仍在（FAILED_RETENTION_HOURS=24h，未到保留期）
+  assert.ok(body.remaining >= 1);
+  // 匿名无权触发
+  assert.equal((await app.request('/api/inspirations/retry', { method: 'POST' })).status, 401);
 });
 
 test('PUT /api/llm/assignments：imagegen 分配同样校验引用完整性，合法值可保存读回', async () => {
@@ -193,7 +205,7 @@ test('PRIMARY/禁用状态下手动生成返回 409', async () => {
   const H = await hdr();
   await app.request('/api/settings', {
     method: 'PUT', headers: H,
-    body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, enabled: false, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }),
+    body: JSON.stringify({ intervalMinutes: 60, coverRetryIntervalMinutes: 15, coverRetryDelaySeconds: 30, retryIntervalMinutes: 15, enabled: false, themes: ['general'], activeThemes: ['general'], styles: ['anime'], activeStyles: ['anime'], kinds: ['image'], sources: ['original_idea'] }),
   });
   const res = await app.request('/api/generate', { method: 'POST', headers: H });
   assert.equal(res.status, 409);

@@ -48,6 +48,8 @@ export interface InspirationSettings {
   coverRetryIntervalMinutes: number;
   /** 补图轮内相邻两张之间的等待间隔（秒，0=不等待；对应环境变量 COVER_RETRY_DELAY_SECONDS 默认 30） */
   coverRetryDelaySeconds: number;
+  /** 提示词生成失败（status=failed）自动重试的检查间隔（分钟，同时是指数退避的基准单位；对应环境变量 RETRY_INTERVAL_MINUTES 默认 15） */
+  retryIntervalMinutes: number;
   enabled: boolean;
   /** 主题库：全部主题（设置面板可增/删/改） */
   themes: string[];
