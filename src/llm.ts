@@ -178,7 +178,10 @@ export async function chatCompletion(messages: ChatMessage[], opts: {
         signal: controller.signal,
       });
       if (!res.ok) {
-        const message = `LLM 请求失败：HTTP ${res.status}`;
+        // 中转的真实原因（Cloudflare 拦截页 / auth_unavailable / model_cooldown 等）往往只在响应体里，
+        // 与生图路径一致透出摘要，避免只看到一光秃秃的 HTTP 403/429 无从排查
+        const detail = await readErrorBody(res, key);
+        const message = `LLM 请求失败：HTTP ${res.status}${detail ? `：${detail}` : ''}`;
         if (res.status >= 500 || res.status === 429) {
           lastError = new Error(attempt === 1 ? `${message}，重试中…` : message);
           if (attempt === 2) throw lastError;
@@ -571,11 +574,16 @@ export async function fetchProviderModels(kind: LlmProviderKind, apiKey: string,
   if (!apiKey || isMaskedKey(apiKey)) throw new Error('API Key 缺失或已脱敏，请重新输入后再获取');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MODEL_LIST_TIMEOUT_MS);
+  // 非 2xx 时带上中转响应体摘要（同 chatCompletion / 生图路径），便于定位 403/429 等真实原因
+  const badRes = async (res: Response) => {
+    const detail = await readErrorBody(res, apiKey);
+    return new Error(`HTTP ${res.status}${detail ? `：${detail}` : ''}`);
+  };
   try {
     let ids: string[] = [];
     if (kind === 'gemini') {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(apiKey)}`, { signal: controller.signal });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw await badRes(res);
       const data = (await res.json()) as GeminiModelList;
       ids = (data.models ?? []).map((m) => String(m.name ?? '').replace(/^models\//, '')).filter(Boolean);
     } else if (kind === 'anthropic') {
@@ -583,7 +591,7 @@ export async function fetchProviderModels(kind: LlmProviderKind, apiKey: string,
         headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
         signal: controller.signal,
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw await badRes(res);
       const data = (await res.json()) as IdModelList;
       ids = (data.data ?? []).map((m) => String(m.id ?? '')).filter(Boolean);
     } else {
@@ -593,7 +601,7 @@ export async function fetchProviderModels(kind: LlmProviderKind, apiKey: string,
         headers: { authorization: `Bearer ${apiKey}` },
         signal: controller.signal,
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw await badRes(res);
       const data = (await res.json()) as IdModelList;
       ids = (data.data ?? []).map((m) => String(m.id ?? '')).filter(Boolean);
     }

@@ -72,6 +72,23 @@ test('HTTP 401 快速失败，不重试', async () => {
   } finally { h.server.close(); }
 });
 
+test('非 2xx 错误透出响应体摘要（定位中转拦截/冷却等真实原因），且不泄漏密钥', async () => {
+  const h = await startServer((req, res) => {
+    if (h.requestCount() === 1) respond(res, 403, { error: { message: 'blocked by WAF: cloudflare' } });
+    else respond(res, 200, { choices: [{ message: { content: 'x' } }] });
+  });
+  try {
+    await assert.rejects(
+      chatCompletion([{ role: 'user', content: 'U' }], { baseUrl: `http://127.0.0.1:${h.port}`, key: 'sk-secret-long-enough', timeoutMs: 2000 }),
+      (err: Error) => err.message.includes('HTTP 403')
+        && err.message.includes('blocked by WAF: cloudflare')
+        && !err.message.includes('sk-secret-long-enough'),
+    );
+    // 403 属 4xx：不重试
+    assert.equal(h.requestCount(), 1);
+  } finally { h.server.close(); }
+});
+
 test('超时抛错且不泄漏密钥', async () => {
   const h = await startServer(() => { /* 永不响应 */ });
   try {
