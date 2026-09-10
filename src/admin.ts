@@ -84,7 +84,7 @@ eye.addEventListener('click',()=>{masked=!masked;
 async function submit(){
   const username=u.get(),password=p.get();
   if(!username){msg('请输入用户名');return;}
-  if(password.length<8){msg('密码至少 8 位');return;}
+  if(password.length<6){msg('密码至少 6 位');return;}
   ${isSetup ? `if(password!==p2.get()){msg('两次输入的密码不一致');return;}` : ''}
   go.disabled=true;go.textContent='${isSetup ? '创建中…' : '登录中…'}';
   try{
@@ -110,7 +110,7 @@ export function adminLoginHtml(): string {
 }
 
 export function adminSetupHtml(): string {
-  return authPageHtml('初始化管理员', '首次使用：创建管理员账号（至少 8 位密码）。创建后需登录才能管理。', 'setup');
+  return authPageHtml('初始化管理员', '首次使用：创建管理员账号（至少 6 位密码）。创建后需登录才能管理。', 'setup');
 }
 
 export function adminPageHtml(user: PublicUser): string {
@@ -570,7 +570,7 @@ body{overflow:hidden}
       </div>
     </div>
     <div class="field">
-      <label class="f" id="upwLabel">初始密码（至少 8 位）</label>
+      <label class="f" id="upwLabel">初始密码（至少 6 位）</label>
       <div class="secret">
         <div class="txtbox keyed" id="uPass" contenteditable="true" role="textbox" data-placeholder="••••••••" aria-label="密码"></div>
         <button class="seye" id="upwEye" type="button" aria-label="显示或隐藏密码" aria-pressed="false">👁</button>
@@ -597,7 +597,7 @@ body{overflow:hidden}
       </div>
     </div>
     <div class="field">
-      <label class="f">新密码（至少 8 位）</label>
+      <label class="f">新密码（至少 6 位）</label>
       <div class="txtbox keyed" id="pwNew" contenteditable="true" role="textbox" data-placeholder="••••••••" aria-label="新密码"></div>
     </div>
     <div class="field">
@@ -870,7 +870,7 @@ const pwNew2V=makeTextField($('#pwNew2'),{placeholder:'••••••••'
 eyeFor($('#pwCur'),$('#pwCurEye'));
 $('#pwSave').addEventListener('click',async()=>{
   const currentPassword=pwCurV.get(),nextPassword=pwNewV.get();
-  if(nextPassword.length<8){toast('新密码至少 8 位',false);return;}
+  if(nextPassword.length<6){toast('新密码至少 6 位',false);return;}
   if(nextPassword!==pwNew2V.get()){toast('两次输入的新密码不一致',false);return;}
   try{
     await jf('/api/auth/change-password',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({currentPassword,nextPassword})});
@@ -1825,7 +1825,7 @@ function openUserModal(user){
   uNameV.set(user?user.username:'');
   uPassV.set('');
   $('#utitle').textContent=user?'编辑用户：'+user.username:'添加用户';
-  $('#upwLabel').textContent=user?'重置密码（留空则不修改）':'初始密码（至少 8 位）';
+  $('#upwLabel').textContent=user?'重置密码（留空则不修改）':'初始密码（至少 6 位）';
   $('#upwHint').textContent=user?'':'创建后该用户需登录后才能进入后台';
   paintRoleSeg();
   $('#umodal').classList.add('show');
@@ -1836,8 +1836,8 @@ $('#uclose').onclick=()=>closeModal('#umodal');
 $('#uSave').addEventListener('click',async()=>{
   const username=uNameV.get(),password=uPassV.get();
   if(!username){toast('请填写用户名',false);return;}
-  if(!editingUserId&&password.length<8){toast('密码至少 8 位',false);return;}
-  if(password&&password.length<8){toast('密码至少 8 位',false);return;}
+  if(!editingUserId&&password.length<6){toast('密码至少 6 位',false);return;}
+  if(password&&password.length<6){toast('密码至少 6 位',false);return;}
   const body={role:uRole};
   if(!editingUserId){body.username=username;body.password=password;}
   else{

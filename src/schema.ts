@@ -86,7 +86,7 @@ export type ModelAssignmentsInput = z.infer<typeof modelAssignmentsSchema>;
 export const usernameSchema = z.string().trim().min(2).max(32)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{1,31}$/, '用户名仅限 2–32 位字母/数字/点/下划线/连字符，且以字母或数字开头');
 
-export const passwordSchema = z.string().min(8).max(128);
+export const passwordSchema = z.string().min(6).max(128);
 
 export const loginSchema = z.object({
   username: z.string().trim().min(1).max(64),

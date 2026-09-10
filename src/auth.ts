@@ -94,7 +94,7 @@ export async function initAuth(): Promise<void> {
   current();
   const envUser = config.ADMIN_USERNAME.trim();
   const envPass = config.ADMIN_PASSWORD;
-  if (users.length === 0 && envUser && envPass.length >= 8) {
+  if (users.length === 0 && envUser && envPass.length >= 6) {
     await createUserInternal(envUser, envPass, 'admin');
     await appendAudit('seed_admin', `从环境变量种子创建管理员 ${envUser}`);
   }
